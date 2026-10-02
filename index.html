@@ -1915,13 +1915,6 @@ function create(){
 
   this.input.keyboard.on('keydown',ensureAudio);
 
-  // Stage skip: press 1 to advance exactly one room.
-  this.input.keyboard.on('keydown-ONE',()=>{
-    if(menuActive||gameOver||MP.dead||window.__TUT_ON)return;
-    // In multiplayer, only the host controls room progression.
-    if(MP.on&&!MP.host)return;
-    startRoom(this,curRoom+1);
-  });
   this.input.mouse.disableContextMenu();
 
   const doBottle=(pt)=>{
