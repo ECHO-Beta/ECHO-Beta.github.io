@@ -3886,6 +3886,10 @@ function endGame(scene,won){
 /* ===== PARTY CO-OP (host = enemy AI, guests mirror) ===== */
 const PAL=[0x4df0ff,0xffe14d,0x6dff6d,0xc07dff,0xff9a3d,0xff7ad9];
 const MP={on:false,host:true,serverAuth:false,g:{},outL:[],outA:[],seen:{},lastA:0,acc:0,hudT:0,dead:false};
+window.MP=MP;
+// Cloudflare authoritative snapshots are delivered by the WebSocket party.
+// Store them here so mpTick() can apply the server state on every client (including HOST).
+window.__echoCloudSnap=(snap)=>{MP.serverSnap=snap;};
 let _sq=0;const mpSeq=()=>(_sq=Math.max(_sq+1,Date.now()));
 const mpNm=v=>String(v==null?'':v).replace(/[^A-Za-z0-9_\-가-힣ㄱ-ㅎㅏ-ㅣ]/g,'').slice(0,10);
 window.__mpStart=(party,getM)=>{if(!party||getM().length<2)return;MP.on=true;MP.room=party;MP.getM=getM;MP.me0=player;MP.serverAuth=!!party.serverAuth;MP.serverSnap=null;document.body.classList.add('mp');};
