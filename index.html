@@ -3961,13 +3961,42 @@ function applyServerSnapshot(scene,snap,dt){
   const me=MP.getM().find(p=>p.sameTab);
   const myRow=me&&pm.get(String(me.peer));
   if(myRow){
-    const ox=player.x,oy=player.y;
-    player.x=myRow[1]; player.y=myRow[2];
-    if(player.body&&player.body.velocity){player.body.velocity.x=(player.x-ox)/Math.max(dt,.016);player.body.velocity.y=(player.y-oy)/Math.max(dt,.016);}
+    /*
+       LOCAL PLAYER MOVEMENT FIX
+       The server is authoritative for the dungeon simulation, but the local
+       player must remain client-predicted so keyboard/touch movement is not
+       overwritten by a 30-60ms snapshot every frame. The server still receives
+       our x/y state below and uses it for authoritative enemy targeting.
+
+       Only correct the local player when the server is clearly far behind/ahead.
+       Small differences are normal network latency and must NOT cancel movement.
+    */
+    const sx=Number(myRow[1]),sy=Number(myRow[2]);
+    const dx=sx-player.x,dy=sy-player.y;
+    const dist=Math.hypot(dx,dy);
+    if(Number.isFinite(sx)&&Number.isFinite(sy)&&dist>140){
+      player.x=sx;
+      player.y=sy;
+      if(player.body){
+        player.body.reset(sx,sy);
+        if(player.body.velocity){
+          player.body.velocity.x=0;
+          player.body.velocity.y=0;
+        }
+      }
+      curVx=0;
+      curVy=0;
+    }
+
     hp=myRow[3];
     MP.dead=hp<=0;
-    if(MP.dead){player.setVisible(false);if(player.body)player.body.enable=false;}
-    else if(!player.visible){player.setVisible(true);if(player.body)player.body.enable=true;}
+    if(MP.dead){
+      player.setVisible(false);
+      if(player.body)player.body.enable=false;
+    }else if(!player.visible){
+      player.setVisible(true);
+      if(player.body)player.body.enable=true;
+    }
   }
   const peerRows=new Map();
   MP.getM().forEach(p=>{const r=pm.get(String(p.peer));if(r)peerRows.set(p.peer,r);});
