@@ -3921,6 +3921,28 @@ function mpApply(scene,ev){
 function mpAttacked(scene,a){
   const ang=a[4];
   const e=enemies.find(x=>x.id===a[2])||{id:-1,x:player.x-Math.cos(ang)*30,y:player.y-Math.sin(ang)*30,hp:9,atkState:'idle',atkCooldown:0,body:{setVelocity(){}}};
+  const targetPeer=a[1];
+  const isTarget=targetPeer===MP.me;
+
+  // Every client draws the attack. Only the actual target applies damage.
+  if(!isTarget){
+    const g=MP.g&&MP.g[targetPeer];
+    const tx=g&&typeof g.x==='number'?g.x:player.x;
+    const ty=g&&typeof g.y==='number'?g.y:player.y;
+    if(a[3]==='g'){
+      guardMuzzleFlash(scene,e.x,e.y,ang);
+      guardBulletFX(scene,e.x,e.y,tx,ty);
+      emitWave(e.x,e.y,150,1000,0x5b8cff,2);
+      burstParticles(tx,ty,0x5b8cff,6);
+    }else{
+      const ex=e.x,ey=e.y;
+      emitWave(ex,ey,115,900,0xff5a6b,2);
+      burstParticles(tx,ty,0xff5a6b,8);
+      tone(90,.06,'square',.08,45,ex,ey);
+    }
+    return;
+  }
+
   if(a[3]==='g'){
     const __pmGuard=window.getPassiveMods?window.getPassiveMods():{damageTaken:1};
     const __guardDmg=Math.round((e.dmg||10)*(__pmGuard.damageTaken||1));
@@ -3979,7 +4001,12 @@ function mpTick(scene,dt){
       e.x+=(r[1]-e.x)*k;e.y+=(r[2]-e.y)*k;e.hp=r[3]/10;e.alert=!!r[4];
       mpFoot(e,dt,Math.hypot(e.x-ox,e.y-oy)/dt);
     });
-    (hp0.A||[]).forEach(a=>{if(a[0]>MP.lastA){MP.lastA=a[0];if(a[1]===MP.me&&!MP.dead)mpAttacked(scene,a);}});
+    (hp0.A||[]).forEach(a=>{
+      if(a[0]>MP.lastA){
+        MP.lastA=a[0];
+        if(!MP.dead)mpAttacked(scene,a);
+      }
+    });
   }
   mpCenter(scene,dt);
   MP.acc+=dt;
@@ -5148,18 +5175,19 @@ function mpCenter(scene,dt){
       ro.textContent='';
       for(let i=0;i<MAXP;i++){
         const p=top[i],row=document.createElement('div');row.className='mrow'+(p?'':' emp');if(p&&curMode==='pvp')row.style.borderColor=p.presence.tm?'#ff5a5a':'#5aa8ff';
-        const c=[String(i+1),p?clean(p.presence.n,10)+(p.sameTab?' (YOU)':''):'OPEN SLOT',(p&&curMode==='pvp'?'TEAM '+(p.presence.tm?'B':'A')+(i===0?' · HOST':''):(p&&i===0?'HOST':'')),p?(p.presence.r===1?'READY':'...'):''];
+        const c=[String(i+1),p?clean(p.presence.n,10)+(p.sameTab?' (YOU)':''):'OPEN SLOT',(p&&curMode==='pvp'?'TEAM '+(p.presence.tm?'B':'A')+(i===0?' · HOST':''):(p&&i===0?'HOST':'')),p?(i===0?'':'READY'):''];
         c.forEach((t,k)=>{const sp=document.createElement('span');sp.textContent=t;if(k===2)sp.className='tg';if(k===3)sp.className='st'+(t==='...'?' w':'');row.appendChild(sp);});
         ro.appendChild(row);
       }
-      $('lbReady').style.display=iHost?'':'';
+      $('lbReady').style.display=iHost?'none':'';
       $('lbGo').style.display=iHost?'':'none';
       if(iHost){
-        const allReady=top.length>0&&top.every(p=>p.presence.r===1);
-        $('lbGo').disabled=!allReady;
-        $('lbGo').style.opacity=allReady?'1':'.45';
-        $('lbGo').style.pointerEvents=allReady?'auto':'none';
-        if(!launching&&!allReady)say('ALL PLAYERS MUST PRESS READY');
+        const guestsReady=top.filter(p=>!p.sameTab).every(p=>p.presence.r===1);
+        const allGuestsReady=top.length>1 ? guestsReady : true;
+        $('lbGo').disabled=!allGuestsReady;
+        $('lbGo').style.opacity=allGuestsReady?'1':'.45';
+        $('lbGo').style.pointerEvents=allGuestsReady?'auto':'none';
+        if(!launching&&!allGuestsReady)say('ALL PLAYERS EXCEPT HOST MUST PRESS READY');
       }
       if(curMode==='pvp'){
         const fmv=(host&&host.presence.fm)||5;
@@ -5277,8 +5305,9 @@ function mpCenter(scene,dt){
     blip(900);
     if(party){
       const mm=members(party.peers()).slice(0,MAXP);
-      const allReady=mm.length>0&&mm.every(p=>p.presence.r===1);
-      if(!allReady){say('ALL PLAYERS MUST PRESS READY');return;}
+      const guests=mm.filter(p=>!p.sameTab);
+      const allGuestsReady=guests.every(p=>p.presence.r===1);
+      if(!allGuestsReady){say('ALL PLAYERS EXCEPT HOST MUST PRESS READY');return;}
     }
     if(curMode==='pvp'){
       if(!party){say('CONNECTING...');return;}
@@ -7192,7 +7221,7 @@ function remoteParry(scene,x,y){
 let SEENQ={};
 function qApply(scene,p,ev){
   const t=ev[1];
-  if(typeof PVP!=='undefined'&&PVP.on&&(p.presence.tm|0)!==PVP.team&&isWallBetween(player.x,player.y,ev[2],ev[3]))return;   // PvP: 벽 너머 적팀 행동은 안 보임
+  // Multiplayer action effects are visualized for every player, including PvP opponents.
   window.__qRemote=true;
   try{
     if(t===1)remoteSlash(scene,ev[2],ev[3],ev[4]/100);
