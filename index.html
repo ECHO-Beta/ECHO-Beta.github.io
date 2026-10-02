@@ -2226,7 +2226,7 @@ function heavyHitFX(scene,x,y,killed=false){
 }
 
 function hitEnemy(scene,e,baseDamage=1,alsoAlert,attackType='x'){
-  if(MP.on&&!MP.host){const m=1+soundGaugeValue/100,d=baseDamage*m;mpHit(e,d);e.setTintFill(0xffffff);scene.time.delayedCall(70,()=>{if(e.active){e.clearTint();if(e.tn)e.setTint(e.tn);}});heavyHitSound(e.x,e.y,false);heavyHitFX(scene,e.x,e.y,false);camRef.shake(135,.010);floatText(scene,e.x,e.y-10,'HIT! ('+d.toFixed(1)+')','#ffaaaa');return;}
+  if(MP.on&&(!MP.host||MP.serverAuth)){const m=1+soundGaugeValue/100,d=baseDamage*m;mpHit(e,d);e.setTintFill(0xffffff);scene.time.delayedCall(70,()=>{if(e.active){e.clearTint();if(e.tn)e.setTint(e.tn);}});heavyHitSound(e.x,e.y,false);heavyHitFX(scene,e.x,e.y,false);camRef.shake(135,.010);floatText(scene,e.x,e.y-10,'HIT! ('+d.toFixed(1)+')','#ffaaaa');return;}
   // 소리 게이지 비율에 따른 데미지 증가 (최대 2.0배 배율 적용)
   const multiplier = 1 + (soundGaugeValue / 100) * 1.0;
   const __pmAtk=window.echoPassiveOnAttack?window.echoPassiveOnAttack(attackType,e,scene):{bonus:0,mult:1};
@@ -2367,7 +2367,7 @@ function enemyHitPlayer(scene,e){
     const mult = 1 + (soundGaugeValue / 100) * 1.0;
     const dmg = baseDmg * mult;
 
-    if(MP.on&&!MP.host)mpHit(e,dmg);else e.hp-=dmg;
+    if(MP.on&&(!MP.host||MP.serverAuth))mpHit(e,dmg);else e.hp-=dmg;
     e.atkState='idle';
     e.atkCooldown=1.2;
     if(e.boss){e.bState='idle';e.bSkill=null;}
@@ -3026,12 +3026,12 @@ function update(time,delta){
 
   // Use an explicit counter instead of enemies.length. Phaser destroys the
   // sprite later via a tween, while the gameplay list is updated immediately.
-  if((!MP.on||MP.host)&&roomRemaining>0&&!MP.rr&&!roomBusy&&!enemies.some(en=>en&&!en.dead))roomRemaining=0;
+  if((!MP.on||(!MP.host&&!MP.serverAuth))&&roomRemaining>0&&!MP.rr&&!roomBusy&&!enemies.some(en=>en&&!en.dead))roomRemaining=0;
   if(roomRemaining===0&&!roomBusy){
     roomBusy=true;
     banner('ROOM '+curRoom+' CLEAR');
     const sc=this;
-    if(!MP.on||MP.host){
+    if(!MP.on||(!MP.host&&!MP.serverAuth)){
       const token=++roomTransitionToken;
       this.time.delayedCall(1200,()=>{
         if(token!==roomTransitionToken||gameOver)return;
@@ -3056,7 +3056,7 @@ function update(time,delta){
       rtEl.innerText=mm+':'+(ss<10?'0':'')+ss;
       rtEl.style.color=roomTimeLeft<=30?'#ff4d4d':(roomTimeLeft<=60?'#ffcc55':'#ffffff');
     }
-    if((!MP.on||MP.host)&&roomRemaining>0&&!MP.dead){
+    if((!MP.on||(!MP.host&&!MP.serverAuth))&&roomRemaining>0&&!MP.dead){
       if(roomTimeLeft<=0&&!roomTimerAlarmed){
         roomTimerAlarmed=true;
         roomTimerPulse=4;
@@ -3326,7 +3326,7 @@ function update(time,delta){
   /* ENEMY AI */
   coneGfx.clear();
 
-  if(!MP.on||MP.host)enemies.forEach(e0=>{const _r=player;if(MP.on)player=mpNear(e0);try{((e)=>{
+  if(!MP.on||(!MP.host&&!MP.serverAuth))enemies.forEach(e0=>{const _r=player;if(MP.on)player=mpNear(e0);try{((e)=>{
     if(e.dead)return;
 
     if(e.kbTimer>0){e.kbTimer-=dt;return;}
@@ -3623,7 +3623,7 @@ function update(time,delta){
     }
     boltGfx.fillStyle(0xb266ff,.9);boltGfx.fillCircle(b.x,b.y,5);
     boltGfx.fillStyle(0xffffff,.6);boltGfx.fillCircle(b.x,b.y,2);
-    if(!MP.on||MP.host){
+    if(!MP.on||(!MP.host&&!MP.serverAuth)){
       const tgt=b.target||player;
       const d=Math.hypot(tgt.x-b.x,tgt.y-b.y);
       if(d<16){
@@ -3885,12 +3885,12 @@ function endGame(scene,won){
 }
 /* ===== PARTY CO-OP (host = enemy AI, guests mirror) ===== */
 const PAL=[0x4df0ff,0xffe14d,0x6dff6d,0xc07dff,0xff9a3d,0xff7ad9];
-const MP={on:false,host:true,g:{},outL:[],outA:[],seen:{},lastA:0,acc:0,hudT:0,dead:false};
+const MP={on:false,host:true,serverAuth:false,g:{},outL:[],outA:[],seen:{},lastA:0,acc:0,hudT:0,dead:false};
 let _sq=0;const mpSeq=()=>(_sq=Math.max(_sq+1,Date.now()));
 const mpNm=v=>String(v==null?'':v).replace(/[^A-Za-z0-9_\-가-힣ㄱ-ㅎㅏ-ㅣ]/g,'').slice(0,10);
-window.__mpStart=(party,getM)=>{if(!party||getM().length<2)return;MP.on=true;MP.room=party;MP.getM=getM;MP.me0=player;document.body.classList.add('mp');};
+window.__mpStart=(party,getM)=>{if(!party||getM().length<2)return;MP.on=true;MP.room=party;MP.getM=getM;MP.me0=player;MP.serverAuth=!!party.serverAuth;MP.serverSnap=null;document.body.classList.add('mp');};
 function mpEv(g,id,t,ang){MP.outA.push([mpSeq(),g.peer,id,t,+ang.toFixed(2)]);if(MP.outA.length>30)MP.outA.splice(0,15);}
-function mpHit(e,dmg){if(e.id>=0){MP.outL.push([mpSeq(),0,e.id,Math.round(dmg*10),player.x|0,player.y|0]);if(MP.outL.length>30)MP.outL.splice(0,15);}}
+function mpHit(e,dmg){if(e.id>=0&&(MP.serverAuth||!MP.host)){MP.outL.push([mpSeq(),0,e.id,Math.round(dmg*10),player.x|0,player.y|0,parryTimer>0?1:0]);if(MP.outL.length>30)MP.outL.splice(0,15);}}
 function mpNear(e){
   let best=MP.dead?null:MP.me0,bd=best?Math.hypot(best.x-e.x,best.y-e.y):1e9;
   for(const k in MP.g){const g=MP.g[k];if(!(g.h>0))continue;const d=Math.hypot(g.x-e.x,g.y-e.y);if(d<bd){bd=d;best=g;}}
@@ -3920,6 +3920,17 @@ function mpApply(scene,ev){
 }
 function mpAttacked(scene,a){
   const ang=a[4];
+  if(MP.serverAuth){
+    const e=enemies.find(x=>x.id===a[2]);
+    if(a[3]==='g'&&e){
+      guardMuzzleFlash(scene,e.x,e.y,ang);
+      guardBulletFX(scene,e.x,e.y,player.x,player.y);
+      camRef.shake(70,.004);
+    }else if(a[3]==='p'){
+      remoteParry(scene,player.x,player.y);
+    }
+    return;
+  }
   const e=enemies.find(x=>x.id===a[2])||{id:-1,x:player.x-Math.cos(ang)*30,y:player.y-Math.sin(ang)*30,hp:9,atkState:'idle',atkCooldown:0,body:{setVelocity(){}}};
   if(a[3]==='g'){
     const __pmGuard=window.getPassiveMods?window.getPassiveMods():{damageTaken:1};
@@ -3929,13 +3940,65 @@ function mpAttacked(scene,a){
     camRef.shake(80,.006);floatText(scene,player.x,player.y-16,'-'+__guardDmg,'#7aa2ff');burstParticles(player.x,player.y,0x5b8cff,10);
   }else enemyHitPlayer(scene,e);
 }
+function applyServerSnapshot(scene,snap,dt){
+  if(!snap||!MP.serverAuth)return;
+  MP.serverSnap=snap;
+  if(typeof snap.R==='number' && snap.R!==curRoom){
+    MP.hk=snap.K||null;
+    MP.rr=false;
+    startRoom(scene,snap.R);
+  }
+  if(snap.V&&!MP.rr){
+    MP.rr=true; enterRevive(scene);
+  }
+  if(typeof snap.T==='number')roomTimeLeft=snap.T;
+
+  const pm=new Map((snap.P||[]).map(r=>[String(r[0]),r]));
+  const me=MP.getM().find(p=>p.sameTab);
+  const myRow=me&&pm.get(String(me.peer));
+  if(myRow){
+    const ox=player.x,oy=player.y;
+    player.x=myRow[1]; player.y=myRow[2];
+    if(player.body&&player.body.velocity){player.body.velocity.x=(player.x-ox)/Math.max(dt,.016);player.body.velocity.y=(player.y-oy)/Math.max(dt,.016);}
+    hp=myRow[3];
+    MP.dead=hp<=0;
+    if(MP.dead){player.setVisible(false);if(player.body)player.body.enable=false;}
+    else if(!player.visible){player.setVisible(true);if(player.body)player.body.enable=true;}
+  }
+  const peerRows=new Map();
+  MP.getM().forEach(p=>{const r=pm.get(String(p.peer));if(r)peerRows.set(p.peer,r);});
+  for(const k in MP.g){const g=MP.g[k],r=peerRows.get(k);if(!r)continue;g.x=r[1];g.y=r[2];g.h=r[3];g.setVisible(g.h>0);if(g.tag)g.tag.setPosition(g.x,g.y-22);}
+
+  const rows=new Map((snap.E||[]).map(r=>[r[0],r]));
+  if((snap.E||[]).length && !enemies.length) startRoom(scene,snap.R);
+  enemies.forEach(e=>{
+    const r=rows.get(e.id);
+    if(!r){ if(!e.dead)killEnemy(scene,e); return; }
+    const k=Math.min(1,dt*18),ox=e.x,oy=e.y;
+    e.x+=(r[1]-e.x)*k;e.y+=(r[2]-e.y)*k;e.hp=r[3]/10;e.alert=!!r[4];
+    if(e.body&&e.body.velocity){e.body.velocity.x=(e.x-ox)/Math.max(dt,.016);e.body.velocity.y=(e.y-oy)/Math.max(dt,.016);}
+    e._serverRow=r;
+  });
+  roomRemaining=(snap.E||[]).length;
+  if(snap.A){
+    MP.serverSeenA=MP.serverSeenA||0;
+    for(const a of snap.A){
+      if(a[0]<=MP.serverSeenA)continue;
+      MP.serverSeenA=Math.max(MP.serverSeenA,a[0]);
+      if(a[1]===MP.me&&!MP.dead)mpAttacked(scene,a);
+    }
+  }
+  if(snap.V){roomRemaining=0;}
+}
+
 function mpTick(scene,dt){
   const m=MP.getM(),me=m.find(p=>p.sameTab);if(!me)return;
   MP.me=me.peer;
   const hostP=m[0],isHost=hostP.sameTab;
+  if(MP.serverAuth){ applyServerSnapshot(scene,MP.serverSnap,dt); }
   if(isHost!==MP.host||MP.init===undefined){
     MP.init=1;MP.host=isHost;
-    enemies.forEach(e=>{if(e.body&&!e.dead){e.body.enable=isHost;if(isHost)e.body.reset(e.x,e.y);}});
+    enemies.forEach(e=>{if(e.body&&!e.dead){e.body.enable=isHost&&!MP.serverAuth;if(isHost&&!MP.serverAuth)e.body.reset(e.x,e.y);}});
   }
   if(!MP.myTag)MP.myTag=scene.add.text(0,0,'',{fontFamily:'Silkscreen,monospace',fontSize:'8px',color:'#ffffff',stroke:'#000',strokeThickness:3}).setOrigin(.5).setDepth(12);
   MP.myTag.setText(mpNm(me.presence.n)||'ME').setPosition(player.x,player.y-22).setVisible(!MP.dead);
@@ -3961,14 +4024,14 @@ function mpTick(scene,dt){
     }
   });
   for(const k in MP.g)if(!seen.has(k)){MP.g[k].tag.destroy();MP.g[k].destroy();delete MP.g[k];}
-  if(isHost){
+  if(isHost&&!MP.serverAuth){
     m.forEach(p=>{
       if(p.sameTab||!p.presence.l)return;
       const s=MP.seen[p.peer]||0;let mx=s;
       p.presence.l.forEach(ev=>{if(ev[0]>s){mx=Math.max(mx,ev[0]);mpApply(scene,ev);}});
       MP.seen[p.peer]=mx;
     });
-  }else{
+  }else if(!MP.serverAuth){
     const hp0=hostP.presence,E=hp0.E;
     if(hp0.R>curRoom){MP.hk=hp0.K||null;startRoom(scene,hp0.R);}
     if(hp0.V&&hp0.R===curRoom&&!MP.rr)enterRevive(scene);
@@ -3995,7 +4058,7 @@ function mpTick(scene,dt){
     MP.hudT=.3;
     const h=m.map((p,i)=>{
       const c=p.sameTab?'ffffff':PAL[i%PAL.length].toString(16).padStart(6,'0');
-      const v=p.sameTab?Math.max(0,Math.round(hp)):(p.presence.h==null?100:p.presence.h);
+      const sr=MP.serverAuth&&MP.serverSnap&&Array.isArray(MP.serverSnap.P)?MP.serverSnap.P.find(r=>String(r[0])===String(p.peer)):null;const v=p.sameTab?Math.max(0,Math.round(hp)):(sr?sr[3]:(p.presence.h==null?100:p.presence.h));
       return '<div><span style="color:#'+c+'">■</span> '+(PVP.on?((p.presence.tm|0)?'B ':'A '):'')+mpNm(p.presence.n)+(p.sameTab?' *':'')+' '+v+(p.lag?' <span style="color:#ff8a94">LAG</span>':'')+'</div>';
     }).join('');
     const st=MP.room&&MP.room.status;
@@ -4133,7 +4196,7 @@ function roomDefs(n){
   const w={soldier:5,guard:n>=5?Math.min(4,.4+(n-5)*.12):0,runner:n>=10?Math.min(3,.6+(n-10)*.15):0,runner2:n>=15?Math.min(2,.5+(n-15)*.12):0,brute:n>=20?Math.min(2.5,.5+(n-20)*.15):0,heavy:n>=25?Math.min(2,.5+(n-25)*.12):0};
   const tot=Object.values(w).reduce((a,b)=>a+b,0);
   const pos=(pad=24)=>{for(let k=0;k<100;k++){const x=30+R()*(MW-60),y=30+R()*(MH-60);if(Math.hypot(x-60,y-60)>170&&!wallList.some(o=>x+pad>o.x&&x-pad<o.x+o.w&&y+pad>o.y&&y-pad<o.y+o.h))return[x,y];}return[MW-60,MH-60];};
-  if(boss){const p=pos(32);const kit=(MP.on&&!MP.host&&MP.hk&&BOSS_KITS[MP.hk])?MP.hk:BOSS_KIT_KEYS[Math.floor(Math.random()*BOSS_KIT_KEYS.length)];curBossKit=kit;out.push({t:'boss',x:p[0],y:p[1],bn:n/10,kit});}
+  if(boss){const p=pos(32);const kit=(MP.on&&MP.hk&&BOSS_KITS[MP.hk])?MP.hk:BOSS_KIT_KEYS[Math.floor(Math.random()*BOSS_KIT_KEYS.length)];curBossKit=kit;out.push({t:'boss',x:p[0],y:p[1],bn:n/10,kit});}
   for(let i=0;i<cnt;i++){let r=R()*tot,t='soldier';for(const k in w){r-=w[k];if(r<=0){t=k;break;}}const p=pos();out.push({t,x:p[0],y:p[1]});}
   return out;
 }
@@ -4165,7 +4228,7 @@ function spawnEnemy(scene,d,id,room){
   e.visVal=e.isGuard?.35:0;e.setAlpha(e.visVal);
   e.alert=false;e.breathTimer=Math.random()*2;e.footstepTimer=Math.random()*.4;e.wanderTimer=0;
   e.coneAngle=Math.random()*Math.PI*2;e.atkState='idle';e.atkTimer=0;e.atkCooldown=0;e.guardShootCooldown=1+Math.random()*1.2;
-  if(MP.on&&!MP.host)e.body.enable=false;
+  if(MP.on&&(!MP.host||MP.serverAuth))e.body.enable=false;
   return e;
 }
 /* ===== BOSS KITS: 5 bosses, 3 skills each ===== */
@@ -4539,7 +4602,7 @@ function mpCenter(scene,dt){
   g.lineStyle(1,0xffffff,.5);g.strokeCircle(RV.x,RV.y,38);
   g.lineBetween(RV.x-10,RV.y,RV.x+10,RV.y);g.lineBetween(RV.x,RV.y-10,RV.x,RV.y+10);
   g.lineStyle(5,0xffffff,1);g.beginPath();g.arc(RV.x,RV.y,60,-Math.PI/2,-Math.PI/2+Math.PI*2*Math.max(0,1-MP.rrT/REV_T),false);g.strokePath();
-  if(MP.host&&MP.rrT<=0)startRoom(scene,curRoom+1);
+  if(MP.host&&!MP.serverAuth&&MP.rrT<=0)startRoom(scene,curRoom+1);
 }
 </script>
 
@@ -4755,6 +4818,7 @@ function mpCenter(scene,dt){
       this.cache=new Map();
       this.callbacks=[];
       this.closed=false;
+      this.serverAuth=true;
       this.onStatus=null;
     }
     async join(){
@@ -4801,7 +4865,7 @@ function mpCenter(scene,dt){
         const old=this.cache.get(m.id)||{};
         this.cache.set(m.id,{...old,__lag:!!m.on});this.emit();
       }else if(m.t==='snap'){
-        // Authoritative dungeon snapshots are exposed to the existing multiplayer snapshot hook.
+        // The Durable Object is the single dungeon simulation authority.
         if(window.__echoCloudSnap)try{window.__echoCloudSnap(m.S);}catch(e){}
       }else if(m.t==='err'){
         if(this.onStatus)this.onStatus('SERVER ERROR: '+(m.e||'UNKNOWN'));
@@ -7014,7 +7078,7 @@ wrap('echoPassiveOnAttack',o=>function(){
 });
 /* 게스트: 내 공격에 패시브 적용 + 내가 때린 몹 표시 / 남이 죽인 몹은 카메라 연출 없이 */
 wrap('hitEnemy',o=>function(scene,e,base,also,type){
-  if(MP.on&&!MP.host&&!window.__mpRemoteHit&&e){
+  if(MP.on&&(!MP.host||MP.serverAuth)&&!window.__mpRemoteHit&&e){
     e._localHitAt=performance.now();
     if(typeof window.echoPassiveOnAttack==='function'){
       const p=window.echoPassiveOnAttack(type||'x',e,scene)||{bonus:0,mult:1};
@@ -7024,7 +7088,7 @@ wrap('hitEnemy',o=>function(scene,e,base,also,type){
   return o.call(this,scene,e,base,also,type);
 });
 wrap('killEnemy',o=>function(scene,e){
-  if(MP.on&&!MP.host&&e&&performance.now()-(e._localHitAt||0)>2500){
+  if(MP.on&&(!MP.host||MP.serverAuth)&&e&&performance.now()-(e._localHitAt||0)>2500){
     return quiet(()=>o.call(this,scene,e));
   }
   return o.call(this,scene,e);
@@ -7034,7 +7098,7 @@ wrap('killEnemy',o=>function(scene,e){
    C. 게스트 소리 이벤트: 총소리만 호스트 몹을 어그로, 병은 조사(Q 이벤트로 처리)
 --------------------------------------------------------------- */
 wrap('addSoundGauge',o=>function(amount,src){
-  if(MP.on&&!MP.host&&src!=='enemy'&&amount!==12){
+  if(MP.on&&!MP.host&&!MP.serverAuth&&src!=='enemy'&&amount!==12){
     MP.host=true;                       // 호스트에게 보내는 어그로 이벤트만 막음
     try{return o.call(this,amount,src);}finally{MP.host=false;}
   }
@@ -7150,7 +7214,7 @@ function qApply(scene,p,ev){
     else if(t===3)remoteBottle(scene,ev[2],ev[3]);
     else if(t===4)remoteParry(scene,ev[2],ev[3]);
   }finally{window.__qRemote=false;}
-  if(MP.host&&!(typeof PVP!=='undefined'&&PVP.on)){        // 호스트만 몹 반응 처리
+  if(MP.host&&!MP.serverAuth&&!(typeof PVP!=='undefined'&&PVP.on)){        // legacy client-host only
     if(t===3){
       enemies.forEach(e=>{
         if(e.dead||e.alert)return;
@@ -7189,6 +7253,7 @@ function wrapParty(party){
       if(patch&&('x' in patch)){
         patch.TS=Date.now();
         patch.c=myCrouch()?1:0;
+        patch.pa=parryTimer>0?1:0;
         const lim=Date.now()-2000,q=(MP.outQ||[]).filter(ev=>ev[0]>lim).slice(-14);
         patch.Q=q.length?q:null;
         if(patch.E){
@@ -7376,7 +7441,7 @@ function installOnce(){
     const os=coneGfx.slice;
     coneGfx.slice=function(x,y,r,a0,a1,cc){
       // 호스트 AI가 팀원 기준으로 그리는 시야각은 호스트가 못 보는 위치면 숨김
-      if(MP.on&&MP.host&&MP.me0&&player!==MP.me0&&isWallBetween(MP.me0.x,MP.me0.y,x,y))r=0;
+      if(MP.on&&MP.host&&!MP.serverAuth&&MP.me0&&player!==MP.me0&&isWallBetween(MP.me0.x,MP.me0.y,x,y))r=0;
       return os.call(this,x,y,r,a0,a1,cc);
     };
   }
@@ -7386,7 +7451,7 @@ function installOnce(){
     ['shake','flash'].forEach(k=>{
       const o=cam[k];
       cam[k]=function(){
-        if(MP.on&&MP.host&&MP.me0&&player!==MP.me0)return cam;   // 몹이 팀원을 상대하는 장면에서 호스트 화면은 흔들지 않음
+        if(MP.on&&MP.host&&!MP.serverAuth&&MP.me0&&player!==MP.me0)return cam;   // 몹이 팀원을 상대하는 장면에서 호스트 화면은 흔들지 않음
         return o.apply(cam,arguments);
       };
     });
