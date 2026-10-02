@@ -4,23 +4,58 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 
-<title>Spectrum ECHO — Sound-Based 2D Pixel Action Game</title>
+<title>Spectrum ECHO – Free Sound-Based Stealth Game | Play in Browser</title>
 
 <meta name="google-site-verification" content="VPOnVVs3fbqNi21X_I5fUKrgCgKgA2f0ZWsnBExhN7o" />
 
-<meta name="description"
-content="Spectrum ECHO is a sound-based 2D pixel action game set on a mysterious planet where sound becomes your way of perceiving the world.">
+<meta name="description" content="Spectrum ECHO is a free 2D pixel stealth action game you play in your browser. The planet is dark, so sound is your only sight. Sneak, slash, parry and survive solo, in 6-player co-op, or in PvP.">
+<meta name="keywords" content="Spectrum ECHO, ECHO Beta, sound based game, stealth game, 2D pixel game, browser game, free online game, co-op game, PvP, roguelike, katana, parry, 스펙트럼 에코, 소리 게임, 스텔스 게임, 도트 게임, 웹 게임, 브라우저 게임, 무료 게임, 협동 게임">
+<meta name="author" content="ECHO Beta Studio">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<meta name="theme-color" content="#000000">
+<meta name="application-name" content="Spectrum ECHO">
+<meta name="apple-mobile-web-app-title" content="Spectrum ECHO">
 
-<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://echobeta-studio.github.io/ECHO-Beta/">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Ccircle cx='32' cy='32' r='26' fill='none' stroke='%23fff' stroke-width='3' stroke-dasharray='6 5'/%3E%3Cpath d='M38 22c-3-3-12-2-12 3 0 6 14 3 14 10 0 6-10 7-14 3' fill='none' stroke='%23fff' stroke-width='5'/%3E%3C/svg%3E">
 
-<link rel="canonical"
-href="https://echobeta-studio.github.io/ECHO-Beta/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Spectrum ECHO">
+<meta property="og:title" content="Spectrum ECHO – Free Sound-Based Stealth Game">
+<meta property="og:description" content="Sound is your only sight. Sneak, slash and parry through the dark. Free in your browser: solo, 6-player co-op and PvP.">
+<meta property="og:url" content="https://echobeta-studio.github.io/ECHO-Beta/">
+<meta property="og:image" content="https://echobeta-studio.github.io/ECHO-Beta/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Spectrum ECHO – sound rings in the dark">
+<meta property="og:locale" content="en_US">
+<meta property="og:locale:alternate" content="ko_KR">
 
-<meta property="og:title" content="Spectrum ECHO">
-<meta property="og:description"
-content="A sound-based sci-fi browser game set on a mysterious planet.">
-<meta property="og:url"
-content="https://echobeta-studio.github.io/ECHO-Beta/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Spectrum ECHO – Free Sound-Based Stealth Game">
+<meta name="twitter:description" content="Sound is your only sight. Free browser stealth action: solo, co-op, PvP.">
+<meta name="twitter:image" content="https://echobeta-studio.github.io/ECHO-Beta/og-image.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "VideoGame",
+  "name": "Spectrum ECHO",
+  "alternateName": ["Spectrum ECHO Beta", "스펙트럼 에코"],
+  "url": "https://echobeta-studio.github.io/ECHO-Beta/",
+  "image": "https://echobeta-studio.github.io/ECHO-Beta/og-image.png",
+  "description": "A free 2D pixel stealth action game for the browser. On a planet where light has scattered, sound is the only way to see. Play solo, in 6-player co-op, or in team PvP.",
+  "genre": ["Stealth", "Action", "Roguelike"],
+  "applicationCategory": "Game",
+  "gamePlatform": "Web browser",
+  "operatingSystem": "Any (desktop and mobile browsers)",
+  "playMode": ["SinglePlayer", "CoOp", "MultiPlayer"],
+  "inLanguage": "en",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "publisher": { "@type": "Organization", "name": "ECHO Beta Studio" }
+}
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Silkscreen&display=swap" rel="stylesheet">
@@ -316,6 +351,14 @@ body.inTut #hint{display:none}
 </head>
 
 <body class="inMenu">
+<noscript>
+  <main style="font-family:sans-serif;color:#fff;background:#000;padding:24px">
+    <h1>Spectrum ECHO – Sound-Based 2D Pixel Stealth Action Game</h1>
+    <p>Spectrum ECHO is a free browser game set on a mysterious planet where light has scattered and sound is the only way to see. Sneak in silence, throw bottles to lure enemies, slash with a katana, shoot a pistol and parry attacks. Play solo dungeon runs, up to 6-player co-op, or custom 1v1 to 5v5 PvP.</p>
+    <p>Please enable JavaScript to play.</p>
+  </main>
+</noscript>
+
 <div id="game"></div><div id="touch">
   <div id="joy"><div id="knob"></div></div>
   <div class="tb" id="tSlash">SLASH</div><div class="tb" id="tShoot">SHOOT</div><div class="tb" id="tParry">PARRY</div><div class="tb" id="tBottle">BOTTLE</div><div class="tb" id="tCrouch">SNEAK</div><div class="tb" id="tPick">PICK</div>
@@ -6921,6 +6964,178 @@ hook('bossSkillEnd',(e,sk)=>{const f=BE[sk];if(f)f(e);},true);
   };
 })();
 window.__ECHO_MUSIC=Music;
+})();
+</script>
+
+<script>
+/* ===== MP ENEMY ATTACK SYNC PATCH =====
+   원인: 멀티에서 적 AI는 호스트만 돌리고, 게스트에게는 위치/HP만 전달돼서
+   게스트 화면에는 windup(준비) / lunge(돌진) / 보스 스킬 모션이 한 번도 재생되지 않았음.
+   해결: 호스트가 "공격 상태가 바뀐 순간"을 이벤트(X)로 보내고, 게스트가 그걸 받아 같은 모션을 재생.
+   이 블록은 다른 <script>들 전부 뒤, </body> 바로 앞에 붙여넣으세요. */
+(function(){
+'use strict';
+const NOW=()=>performance.now();
+const safe=f=>{try{f();}catch(err){console.warn('[mp-atk]',err);}};
+function mpX(a){MP.outX=MP.outX||[];MP.outX.push([mpSeq()].concat(a));if(MP.outX.length>40)MP.outX.splice(0,20);}
+
+/* ---------- 호스트: 공격 상태 변화를 이벤트로 기록 ---------- */
+const _eat=window.enemyAttackTick;
+if(typeof _eat==='function')window.enemyAttackTick=function(scene,e,dt,d){
+  const before=e.atkState;
+  const r=_eat.apply(this,arguments);
+  if(MP.on&&MP.host&&e.atkState!==before){
+    const code=e.atkState==='windup'?1:e.atkState==='lunge'?2:3;
+    safe(()=>mpX([code,e.id,Math.round(Math.atan2(player.y-e.y,player.x-e.x)*100),Math.round((e.atkTimer||0)*100)]));
+  }
+  return r;
+};
+
+const _bat=window.bossAttackTick;
+if(typeof _bat==='function')window.bossAttackTick=function(scene,e,dt,d){
+  const bs=e.bState,sk=e.bSkill,nb=bossBolts.length;
+  const r=_bat.apply(this,arguments);
+  if(MP.on&&MP.host&&(e.bState!==bs||e.bSkill!==sk)){
+    safe(()=>{
+      const st={idle:0,windup:1,active:2,recover:3}[e.bState]||0,t=e._bTarget;
+      const bolts=bossBolts.slice(nb).map(b=>[b.x|0,b.y|0,Math.round(Math.atan2(b.vy,b.vx)*100),Math.round(Math.hypot(b.vx,b.vy))]);
+      mpX([10+st,e.id,e._bAngle===undefined?null:Math.round(e._bAngle*100),Math.round((e.bTimer||0)*100),e.bSkill||sk||'',t?t.x|0:0,t?t.y|0:0,bolts]);
+    });
+  }
+  return r;
+};
+
+const _gs=window.guardShoot;
+if(typeof _gs==='function')window.guardShoot=function(scene,e){
+  const r=_gs.apply(this,arguments);
+  if(r&&MP.on&&MP.host)safe(()=>mpX([20,e.id,Math.round(Math.atan2(player.y-e.y,player.x-e.x)*100),Math.round(Math.hypot(player.x-e.x,player.y-e.y))]));
+  return r;
+};
+
+/* ---------- 호스트: 스냅샷에 이벤트(X)와 공격 상태(E[5]) 첨부 ---------- */
+const _ms=window.__mpStart;
+if(typeof _ms==='function')window.__mpStart=function(party){
+  const r=_ms.apply(this,arguments);
+  if(MP.on&&party&&!party.__atkPatched){
+    party.__atkPatched=true;
+    const p0=party.presence.bind(party);
+    party.presence=function(patch,force){
+      if(patch&&patch.E){   // E가 있는 패치 = 호스트가 보내는 게임 스냅샷
+        safe(()=>{
+          patch.X=(MP.outX||[]).slice(-16);
+          patch.E.forEach(row=>{
+            const en=enemies.find(x=>x.id===row[0]);
+            row[5]=!en?0:en.boss?((en.bState&&en.bState!=='idle')?1:0):(en.atkState==='windup'?1:en.atkState==='lunge'?2:0);
+          });
+        });
+      }
+      return p0(patch,force);
+    };
+  }
+  return r;
+};
+
+/* ---------- 게스트: 받은 이벤트 재생 ---------- */
+function telegraph(e){
+  const g=coneGfx;e.visVal=1;
+  if(e.et==='brute'){
+    const R=e.hr||108,p=e.atkState==='windup'?Math.max(.15,1-e.atkTimer/(e.wu||.62)):1;
+    g.fillStyle(0xff6a2a,.1+.14*p);g.fillCircle(e.x,e.y,R*p);
+    g.lineStyle(3,0xff8a3d,.55+.35*p);g.strokeCircle(e.x,e.y,R);
+    return;
+  }
+  const a=e._ang||0;
+  if(e.atkState==='windup'){
+    const prog=Math.min(1,Math.max(0,1-e.atkTimer/(e.wu||.18)));
+    g.lineStyle(3,0xff2020,.5+.4*prog);
+    g.lineBetween(e.x,e.y,e.x+Math.cos(a)*(26+prog*18),e.y+Math.sin(a)*(26+prog*18));
+    g.lineStyle(2,0xff5050,.4+.25*prog);g.strokeCircle(e.x,e.y,15+prog*7);
+  }else{
+    g.lineStyle(4,0xff3030,.9);
+    g.lineBetween(e.x-Math.cos(a)*16,e.y-Math.sin(a)*16,e.x+Math.cos(a)*28,e.y+Math.sin(a)*28);
+    g.lineStyle(2,0xffffff,.6);
+    g.lineBetween(e.x-Math.cos(a)*10,e.y-Math.sin(a)*10,e.x+Math.cos(a)*22,e.y+Math.sin(a)*22);
+  }
+}
+
+function applyEvent(scene,ev){
+  const e=enemies.find(x=>x.id===ev[1]);
+  if(!e||e.dead||!e.active)return;
+  const code=ev[2],t=NOW();
+  if(code<10){                                   // 일반 적
+    const slam=e.et==='brute';
+    if(code===1){
+      e.atkState='windup';e.atkTimer=Math.max(.05,ev[4]/100);e._ang=ev[3]/100;e._t0=t;
+      tone(slam?150:900,.1,slam?'sawtooth':'square',.12,slam?60:300,e.x,e.y);
+      emitEnemySound(e.x,e.y,slam?330:260,COL.soldier,'attack');
+      scene.tweens.add({targets:e,scale:e.scale*(slam?1.22:1.5),duration:slam?260:90,yoyo:true});
+    }else if(code===2){
+      e.atkState='lunge';e.atkTimer=Math.max(.05,ev[4]/100);e._ang=ev[3]/100;e._t0=t;
+    }else{
+      if(slam&&e.atkState==='lunge'){
+        emitWave(e.x,e.y,130,900,0xff8a3d,4);burstParticles(e.x,e.y,0xff8a3d,22);
+        camRef.shake(170,.012);tone(70,.25,'sawtooth',.18,35,e.x,e.y);noiseBurst(.12,.2,900,e.x,e.y);
+      }
+      e.atkState='idle';
+    }
+  }else if(code<20){                             // 보스 스킬
+    const st=['idle','windup','active','recover'][code-10],sk=ev[5]||null;
+    e.bState=st;e.bSkill=st==='idle'?null:sk;e.bTimer=ev[4]/100;e._t0=t;
+    const ang=ev[3]==null?undefined:ev[3]/100,tg=(ev[6]||ev[7])?{x:ev[6],y:ev[7]}:undefined;
+    if(st==='windup'&&sk)safe(()=>bossSkillStart(scene,e,sk));   // 준비 소리 재생 (데미지 없음)
+    e._bAngle=ang;e._bTarget=tg;
+    if(st==='windup'&&sk==='pulse')e._bR=0;
+    if(st==='active'&&(ev[8]||[]).length){                        // 보스 투사체: 보이기만 함 (판정은 호스트)
+      ev[8].forEach(b=>bossBolts.push({x:b[0],y:b[1],vx:Math.cos(b[2]/100)*b[3],vy:Math.sin(b[2]/100)*b[3],life:2.2,boss:e,dmgMul:0,target:null}));
+      tone(600,.12,'sawtooth',.16,250,e.x,e.y);
+    }
+  }else if(code===20){                           // 가드 사격
+    const a=ev[3]/100,d=ev[4];
+    guardMuzzleFlash(scene,e.x,e.y,a);
+    guardBulletFX(scene,e.x,e.y,e.x+Math.cos(a)*d,e.y+Math.sin(a)*d);
+    if(e.et==='heavy'){[-.28,.28].forEach(o=>guardBulletFX(scene,e.x,e.y,e.x+Math.cos(a+o)*d,e.y+Math.sin(a+o)*d));camRef.shake(120,.011);}
+    emitWave(e.x,e.y,150,1000,0x5b8cff,2);emitEnemySound(e.x,e.y,200,COL.guard,'gun');
+    tone(125+Math.random()*25,.11,'square',.14,65,e.x,e.y);noiseBurst(.05,.15,2400,e.x,e.y);
+    camRef.shake(80,.006);
+  }
+}
+
+function guestTick(dt){
+  const m=MP.getM&&MP.getM(),hostP=m&&m[0];
+  if(!hostP||hostP.sameTab||!gameScene)return;
+  const pr=hostP.presence||{},X=pr.X||[];
+  if(MP.lastX===undefined){MP.lastX=X.reduce((a,v)=>Math.max(a,v[0]),0);}   // 합류 전 오래된 이벤트는 무시
+  else X.forEach(ev=>{if(ev[0]>MP.lastX){MP.lastX=ev[0];safe(()=>applyEvent(gameScene,ev));}});
+  const st={};(pr.E||[]).forEach(r=>{st[r[0]]=r[5];});
+  const t=NOW();
+  enemies.forEach(e=>{
+    if(!e||e.dead||!e.active)return;
+    if(e.body&&e.body.velocity&&e._gx!==undefined&&dt>0){e.body.velocity.x=(e.x-e._gx)/dt;e.body.velocity.y=(e.y-e._gy)/dt;}   // 걷기 애니메이션용
+    e._gx=e.x;e._gy=e.y;
+    if(e.boss){
+      if(e.bState&&e.bState!=='idle'){
+        e.bTimer-=dt;
+        if(e.bState==='active'&&e.bSkill==='pulse')e._bR=(e._bR||0)+dt*520;
+        if(st[e.id]===0&&t-(e._t0||0)>200||e.bTimer<-1.5)e.bState='idle';
+        else safe(()=>bossSkillFX(gameScene,e));
+      }
+      return;
+    }
+    if(e.atkState==='windup'||e.atkState==='lunge'){
+      e.atkTimer-=dt;
+      if(e.atkTimer<-.3||(st[e.id]===0&&t-(e._t0||0)>150))e.atkState='idle';
+      else telegraph(e);
+    }
+  });
+}
+
+/* coneGfx는 update() 안에서 매 프레임 clear되므로, clear 뒤에 호출되는 updateMarks에 얹어서 그림 */
+const _um=window.updateMarks;
+if(typeof _um==='function')window.updateMarks=function(dt){
+  const r=_um.apply(this,arguments);
+  if(MP.on&&!MP.host)safe(()=>guestTick(dt));
+  return r;
+};
 })();
 </script>
 </body>
