@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://echobeta-studio.github.io/ECHO-Beta/sitemap.xml
