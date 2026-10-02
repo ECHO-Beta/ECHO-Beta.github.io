@@ -3921,28 +3921,6 @@ function mpApply(scene,ev){
 function mpAttacked(scene,a){
   const ang=a[4];
   const e=enemies.find(x=>x.id===a[2])||{id:-1,x:player.x-Math.cos(ang)*30,y:player.y-Math.sin(ang)*30,hp:9,atkState:'idle',atkCooldown:0,body:{setVelocity(){}}};
-  const targetPeer=a[1];
-  const isTarget=targetPeer===MP.me;
-
-  // Every client draws the attack. Only the actual target applies damage.
-  if(!isTarget){
-    const g=MP.g&&MP.g[targetPeer];
-    const tx=g&&typeof g.x==='number'?g.x:player.x;
-    const ty=g&&typeof g.y==='number'?g.y:player.y;
-    if(a[3]==='g'){
-      guardMuzzleFlash(scene,e.x,e.y,ang);
-      guardBulletFX(scene,e.x,e.y,tx,ty);
-      emitWave(e.x,e.y,150,1000,0x5b8cff,2);
-      burstParticles(tx,ty,0x5b8cff,6);
-    }else{
-      const ex=e.x,ey=e.y;
-      emitWave(ex,ey,115,900,0xff5a6b,2);
-      burstParticles(tx,ty,0xff5a6b,8);
-      tone(90,.06,'square',.08,45,ex,ey);
-    }
-    return;
-  }
-
   if(a[3]==='g'){
     const __pmGuard=window.getPassiveMods?window.getPassiveMods():{damageTaken:1};
     const __guardDmg=Math.round((e.dmg||10)*(__pmGuard.damageTaken||1));
@@ -4001,12 +3979,7 @@ function mpTick(scene,dt){
       e.x+=(r[1]-e.x)*k;e.y+=(r[2]-e.y)*k;e.hp=r[3]/10;e.alert=!!r[4];
       mpFoot(e,dt,Math.hypot(e.x-ox,e.y-oy)/dt);
     });
-    (hp0.A||[]).forEach(a=>{
-      if(a[0]>MP.lastA){
-        MP.lastA=a[0];
-        if(!MP.dead)mpAttacked(scene,a);
-      }
-    });
+    (hp0.A||[]).forEach(a=>{if(a[0]>MP.lastA){MP.lastA=a[0];if(a[1]===MP.me&&!MP.dead)mpAttacked(scene,a);}});
   }
   mpCenter(scene,dt);
   MP.acc+=dt;
@@ -4772,97 +4745,90 @@ function mpCenter(scene,dt){
     return supabaseClient;
   }
 
-  class SupabaseParty{
-    constructor(code){
+  class CloudflareParty{
+    constructor(code,host){
       this.code=code.toUpperCase();
-      this.channel=null;
-      this.clientId=SupabaseParty.uid||(SupabaseParty.uid=(window.crypto&&crypto.randomUUID?crypto.randomUUID():'p'+Math.random().toString(36).slice(2)+Date.now().toString(36)));
+      this.host=!!host;
+      this.ws=null;
+      this.clientId=CloudflareParty.uid||(CloudflareParty.uid=(window.crypto&&crypto.randomUUID?crypto.randomUUID():'p'+Math.random().toString(36).slice(2)+Date.now().toString(36)));
       this.local={n:myName(),r:0,t:Date.now(),go:0};
       this.cache=new Map();
       this.callbacks=[];
       this.closed=false;
+      this.onStatus=null;
     }
     async join(){
-      const sb=initSupabase();
-      if(!sb)throw new Error('SUPABASE_NOT_CONFIGURED');
-      this.channel=sb.channel('spectrum-party-'+this.code.toLowerCase(),{
-        config:{presence:{key:this.clientId},broadcast:{self:false}}
-      });
-      this.channel.on('presence',{event:'sync'},()=>this.syncPresence());
-      this.channel.on('presence',{event:'join'},()=>this.syncPresence());
-      this.channel.on('presence',{event:'leave'},()=>this.syncPresence());
-      this.channel.on('broadcast',{event:'state'},msg=>{
-        const d=msg.payload||{};
-        if(!d.peer||d.peer===this.clientId)return;
-        const old=this.cache.get(d.peer)||{};
-        this.cache.set(d.peer,{...old,...(d.state||{})});
-        this.emit();
-      });
-      try{
-        await new Promise((resolve,reject)=>{
-          let fin=false;
-          const timeout=setTimeout(()=>{if(!fin){fin=true;reject(new Error('SUPABASE_TIMEOUT'));}},6000);
-          this.channel.subscribe(status=>{
-            if(fin)return;
-            if(status==='SUBSCRIBED'){fin=true;clearTimeout(timeout);resolve();}
-            else if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){fin=true;clearTimeout(timeout);reject(new Error(status));}
-          });
+      const base='wss://echo-server.echo-beta-server.workers.dev/ws/';
+      const url=base+encodeURIComponent(this.code);
+      this.ws=new WebSocket(url);
+      await new Promise((resolve,reject)=>{
+        let done=false;
+        const timeout=setTimeout(()=>{if(!done){done=true;reject(new Error('CLOUDFLARE_TIMEOUT'));try{this.ws.close();}catch(e){}}},8000);
+        this.ws.addEventListener('open',()=>{
+          if(done)return;
+          this.ws.send(JSON.stringify({t:'join',id:this.clientId,host:this.host}));
         });
-      }catch(err){
-        // stop supabase-js from retrying this dead channel in the background
-        try{await sb.removeChannel(this.channel);}catch(e){}
-        this.channel=null;this.closed=true;
-        throw err;
-      }
+        this.ws.addEventListener('message',ev=>{
+          try{
+            const m=JSON.parse(ev.data);
+            if(m.t==='ok'){
+              if(done)return;
+              done=true;clearTimeout(timeout);
+              Object.entries(m.peers||{}).forEach(([id,pres])=>this.cache.set(id,{...pres}));
+              this.emit();resolve();return;
+            }
+            this.handleMessage(m);
+          }catch(e){}
+        });
+        this.ws.addEventListener('error',()=>{
+          if(!done){done=true;clearTimeout(timeout);reject(new Error('CLOUDFLARE_ERROR'));}
+        });
+        this.ws.addEventListener('close',()=>{
+          if(!done){done=true;clearTimeout(timeout);reject(new Error('CLOUDFLARE_CLOSED'));}
+        });
+      });
       await this.presence(this.local,true);
       return this;
     }
+    handleMessage(m){
+      if(m.t==='s'&&m.id&&m.s){
+        const old=this.cache.get(m.id)||{};
+        this.cache.set(m.id,{...old,...m.s});
+        this.emit();
+      }else if(m.t==='x'&&m.id){
+        this.cache.delete(m.id);this.emit();
+      }else if(m.t==='lag'&&m.id){
+        const old=this.cache.get(m.id)||{};
+        this.cache.set(m.id,{...old,__lag:!!m.on});this.emit();
+      }else if(m.t==='snap'){
+        // Authoritative dungeon snapshots are exposed to the existing multiplayer snapshot hook.
+        if(window.__echoCloudSnap)try{window.__echoCloudSnap(m.S);}catch(e){}
+      }else if(m.t==='err'){
+        if(this.onStatus)this.onStatus('SERVER ERROR: '+(m.e||'UNKNOWN'));
+      }
+    }
     presence(patch,forceTrack=false){
       this.local={...this.local,...patch};
-      if(!this.channel)return Promise.resolve();
-      const state={...this.local};
-      // Lobby identity/status uses Presence. High-frequency gameplay state uses Broadcast.
-      const gameplay=('x' in patch)||('y' in patch)||('h' in patch)||('v' in patch)||('E' in patch)||('A' in patch)||('l' in patch)||('R' in patch);
-      if(gameplay&&!forceTrack){
-        return this.channel.send({type:'broadcast',event:'state',payload:{peer:this.clientId,state}}).catch(()=>{});
-      }
-      return this.channel.track(state).catch(()=>{});
-    }
-    syncPresence(){
-      if(!this.channel)return;
-      const ps=this.channel.presenceState()||{};
-      const next=new Set();
-      Object.keys(ps).forEach(key=>{
-        const arr=ps[key]||[];
-        if(!arr.length)return;
-        const q=arr[arr.length-1]||{};
-        if(key===this.clientId){
-          this.cache.set(key,{...this.cache.get(key),...q});
-        }else{
-          next.add(key);
-          const old=this.cache.get(key)||{};
-          this.cache.set(key,{...old,...q});
-        }
-      });
-      for(const key of this.cache.keys())if(key!==this.clientId&&!next.has(key))this.cache.delete(key);
+      if(!this.ws||this.ws.readyState!==1)return Promise.resolve();
+      try{this.ws.send(JSON.stringify({t:'s',s:patch}));}catch(e){}
       this.emit();
+      return Promise.resolve();
     }
     peers(){
       const out=[];
-      this.cache.forEach((presence,peer)=>{
-        out.push({kind:'viewer',peer,presence,sameTab:peer===this.clientId});
-      });
-      if(!out.some(p=>p.sameTab))out.push({kind:'viewer',peer:this.clientId,presence:this.local,sameTab:true});
+      this.cache.forEach((presence,peer)=>out.push({kind:'viewer',peer,presence,sameTab:false,lag:!!presence.__lag}));
+      out.push({kind:'viewer',peer:this.clientId,presence:this.local,sameTab:true});
       return out.sort((a,b)=>(a.presence.t||0)-(b.presence.t||0)||(a.peer<b.peer?-1:1));
     }
     onPeers(cb){this.callbacks.push(cb);cb({peers:this.peers()});return ()=>{this.callbacks=this.callbacks.filter(x=>x!==cb);};}
     emit(){const data={peers:this.peers()};this.callbacks.slice().forEach(cb=>{try{cb(data);}catch(e){console.warn(e);}});}
     async leave(){
       this.closed=true;this.callbacks.length=0;
-      if(this.channel){try{await this.channel.untrack();}catch(e){}try{await this.channel.unsubscribe();}catch(e){}}
-      this.channel=null;this.cache.clear();
+      try{if(this.ws&&this.ws.readyState===1){this.ws.send(JSON.stringify({t:'bye'}));this.ws.close();}}catch(e){}
+      this.ws=null;this.cache.clear();
     }
   }
+
 
   /* Zero-config transport: full-mesh WebRTC via PeerJS public broker. Party code = host's peer id.
      Hardened: STUN+TURN relay, heartbeat, auto-reconnect (broker + peers), grace period before a player is dropped. */
@@ -5175,20 +5141,11 @@ function mpCenter(scene,dt){
       ro.textContent='';
       for(let i=0;i<MAXP;i++){
         const p=top[i],row=document.createElement('div');row.className='mrow'+(p?'':' emp');if(p&&curMode==='pvp')row.style.borderColor=p.presence.tm?'#ff5a5a':'#5aa8ff';
-        const c=[String(i+1),p?clean(p.presence.n,10)+(p.sameTab?' (YOU)':''):'OPEN SLOT',(p&&curMode==='pvp'?'TEAM '+(p.presence.tm?'B':'A')+(i===0?' · HOST':''):(p&&i===0?'HOST':'')),p?(i===0?'':'READY'):''];
+        const c=[String(i+1),p?clean(p.presence.n,10)+(p.sameTab?' (YOU)':''):'OPEN SLOT',(p&&curMode==='pvp'?'TEAM '+(p.presence.tm?'B':'A')+(i===0?' · HOST':''):(p&&i===0?'HOST':'')),p?(i===0||p.presence.r===1?'READY':'...'):''];
         c.forEach((t,k)=>{const sp=document.createElement('span');sp.textContent=t;if(k===2)sp.className='tg';if(k===3)sp.className='st'+(t==='...'?' w':'');row.appendChild(sp);});
         ro.appendChild(row);
       }
-      $('lbReady').style.display=iHost?'none':'';
-      $('lbGo').style.display=iHost?'':'none';
-      if(iHost){
-        const guestsReady=top.filter(p=>!p.sameTab).every(p=>p.presence.r===1);
-        const allGuestsReady=top.length>1 ? guestsReady : true;
-        $('lbGo').disabled=!allGuestsReady;
-        $('lbGo').style.opacity=allGuestsReady?'1':'.45';
-        $('lbGo').style.pointerEvents=allGuestsReady?'auto':'none';
-        if(!launching&&!allGuestsReady)say('ALL PLAYERS EXCEPT HOST MUST PRESS READY');
-      }
+      $('lbReady').style.display=iHost?'none':'';$('lbGo').style.display=iHost?'':'none';
       if(curMode==='pvp'){
         const fmv=(host&&host.presence.fm)||5;
         $('lbTitle').textContent='READY ROOM · PVP '+fmv+'v'+fmv;$('pvFmtRow').style.display=iHost?'':'none';
@@ -5203,51 +5160,25 @@ function mpCenter(scene,dt){
     if(host&&host.presence.go===1)countdown();
   }
   async function joinCode(code,byCode,forceLocal){
-    const sb=initSupabase();
-    if(!forceLocal&&!sb&&!window.Peer){say('NETWORK LIBRARY NOT LOADED - CHECK INTERNET');return;}
-    // If the realtime server was unreachable recently, go straight to the direct (peer-to-peer) connection.
-    let useSb=!forceLocal&&!!sb&&!(window.Peer&&(window.__sbBadUntil||0)>Date.now());
     $('lbDiag').textContent='';$('lbLocal').style.display='none';
     leaveParty();launching=false;ready=false;$('lbReady').textContent='READY';
-    $('lbCode').textContent=code;   // show the code right away (it becomes active once connected)
-    let tries=0,net=0,dg=null;
+    $('lbCode').textContent=code;
     lastJoin={code,byCode};$('lbRetry').style.display='none';
-    if(!forceLocal){
-      say('CHECKING NETWORK...');
-      dg=await netDiag();if(!lobbyOpen)return;
-      if(useSb&&!dg.sb)useSb=false;
-      if(!useSb&&!dg.pj){failUI(dg,'CODE '+code+' IS NOT ACTIVE - NO PARTY SERVER CAN BE REACHED FROM THIS BROWSER');return;}
-    }
-    say(byCode?'JOINING PARTY...':'OPENING PARTY...');
     if(forceLocal){
-      try{party=await new LocalParty(code).join();}catch(e){party=null;say('LOCAL PARTY IS NOT SUPPORTED IN THIS BROWSER');$('lbRetry').style.display='';return;}
-    }else
-
-    for(;;){
-      try{party=useSb?await new SupabaseParty(code).join():await new P2PParty(code,!byCode).join();break;}
-      catch(e){
+      try{party=await new LocalParty(code).join();}
+      catch(e){party=null;say('LOCAL PARTY IS NOT SUPPORTED IN THIS BROWSER');$('lbRetry').style.display='';return;}
+    }else{
+      say(byCode?'OPENING PARTY...':'JOINING PARTY...');
+      try{
+        party=await new CloudflareParty(code,!byCode).join();
+      }catch(e){
         party=null;
-        if(useSb&&window.Peer&&(!dg||dg.pj)){
-          console.warn('realtime server failed, switching to direct connection',e);
-          window.__sbBadUntil=Date.now()+300000;useSb=false;net=0;
-          say('SERVER UNREACHABLE - SWITCHING TO DIRECT CONNECTION...');
-          await new Promise(r=>setTimeout(r,500));if(!lobbyOpen)return;continue;
-        }
-        if(!useSb&&!byCode&&e&&e.message==='P2P_CODE_TAKEN'&&tries++<4){code=rndCode();continue;}
-        if(!useSb&&e&&(e.message==='P2P_ERROR'||e.message==='P2P_TIMEOUT')&&navigator.onLine!==false&&net++<2){
-          say('RETRYING... ('+net+'/2)');await new Promise(r=>setTimeout(r,900));if(!lobbyOpen)return;continue;
-        }
-        if(useSb){say(e&&e.message==='SUPABASE_TIMEOUT'?'CONNECT TIMEOUT - CHECK SERVER URL / KEY':'CONNECT FAILED - CHECK SERVER URL / KEY');$('lbRetry').style.display='';$('lbLocal').style.display='';if(dg)$('lbDiag').textContent=diagText(dg);if(!SB_EMBEDDED)showSrv(true);}
-        else{
-          const m=e&&e.message;
-          const msg=navigator.onLine===false?'YOU ARE OFFLINE - CHECK YOUR CONNECTION, THEN RETRY'
-            :m==='P2P_NOT_FOUND'?(byCode?'NO PARTY FOUND - CHECK THE CODE':'CONNECT FAILED - TRY AGAIN')
-            :m==='P2P_CODE_TAKEN'?'CODE TAKEN - PRESS RETRY'
-            :'CODE '+code+' IS NOT ACTIVE - CANNOT REACH THE PARTY SERVER (RETRY, OR USE LOCAL)';
-          failUI(dg,msg);
-          if(!dg)netDiag().then(d=>{if(lobbyOpen)$('lbDiag').textContent=diagText(d);});
-        }
-        console.warn(e);return;
+        const m=e&&e.message;
+        const msg=m==='CLOUDFLARE_TIMEOUT'?'CONNECT TIMEOUT - CHECK THE PARTY SERVER'
+          :m==='CLOUDFLARE_ERROR'?'SERVER CONNECTION FAILED - RETRY'
+          :m==='CLOUDFLARE_CLOSED'?'SERVER CLOSED THE CONNECTION - RETRY'
+          :'CONNECT FAILED - CHECK THE PARTY CODE';
+        say(msg);$('lbRetry').style.display='';return;
       }
     }
     myCode=code;myT=Date.now();$('lbCode').textContent=code;
@@ -5255,8 +5186,8 @@ function mpCenter(scene,dt){
     party.onStatus=st=>{if(st&&lobbyOpen&&!launching)say(st);};
     unsub=party.onPeers(ch=>render(ch.peers));
     say(forceLocal?(byCode?'LOCAL PARTY JOINED - WAITING FOR HOST':'LOCAL PARTY (THIS BROWSER ONLY) - OPEN THIS PAGE IN ANOTHER TAB AND JOIN WITH THE CODE'):byCode?'JOINED - WAITING FOR HOST TO LAUNCH':'SHARE THE CODE WITH YOUR PARTY (UP TO 5 INVITES)');
-    if((useSb||forceLocal)&&byCode)setTimeout(()=>{if(party&&members(party.peers()).length<=1)say(forceLocal?'NO LOCAL PARTY WITH THAT CODE - YOU ARE HOSTING IT':'NO PARTY FOUND - YOU ARE HOSTING THIS CODE');},2200);
   }
+
   function renderSolo(){
     const ro=$('lbRoster');ro.textContent='';const row=document.createElement('div');row.className='mrow';
     ['1',myName()+' (YOU)','SOLO','READY'].forEach((t,k)=>{const sp=document.createElement('span');sp.textContent=t;if(k===2)sp.className='tg';if(k===3)sp.className='st';row.appendChild(sp);});
@@ -5271,12 +5202,8 @@ function mpCenter(scene,dt){
   }
   async function openLobby(mode){
     curMode=mode==='pvp'?'pvp':'dungeon';MAXP=curMode==='pvp'?10:6;$('lbPvp').style.display=curMode==='pvp'?'':'none';$('pvFmt').value='5';
-    solo=false;ready=false;$('lbReady').textContent='READY';
-    $('lobby').classList.remove('solo');$('lbTitle').textContent=curMode==='pvp'?'READY ROOM · PVP':'READY ROOM';
-    blip(700);lobbyOpen=true;$('lobby').classList.remove('hidden');
-    $('lbReady').style.display='';
-    $('lbGo').style.display='none';
-    $('lbGo').disabled=true;$('lbGo').style.opacity='.45';$('lbGo').style.pointerEvents='none';
+    solo=false;$('lobby').classList.remove('solo');$('lbTitle').textContent=curMode==='pvp'?'READY ROOM · PVP':'READY ROOM';
+    blip(700);lobbyOpen=true;$('lobby').classList.remove('hidden');$('lbGo').style.display='';$('lbReady').style.display='none';
     if(!party)joinCode(rndCode(),false);
   }
   function closeLobby(){$('lbRetry').style.display='none';$('lbLocal').style.display='none';$('lbDiag').textContent='';solo=false;$('lobby').classList.remove('solo');leaveParty();myCode='';$('lbCode').textContent='-----';$('lbRoster').textContent='';lobbyOpen=false;launching=false;$('lobby').classList.add('hidden');}
@@ -5303,12 +5230,6 @@ function mpCenter(scene,dt){
   $('lbReady').onclick=()=>{ready=!ready;$('lbReady').textContent=ready?'UNREADY':'READY';blip(ready?800:500);if(party)party.presence({r:ready?1:0});};
   $('lbGo').onclick=()=>{
     blip(900);
-    if(party){
-      const mm=members(party.peers()).slice(0,MAXP);
-      const guests=mm.filter(p=>!p.sameTab);
-      const allGuestsReady=guests.every(p=>p.presence.r===1);
-      if(!allGuestsReady){say('ALL PLAYERS EXCEPT HOST MUST PRESS READY');return;}
-    }
     if(curMode==='pvp'){
       if(!party){say('CONNECTING...');return;}
       const mm=members(party.peers()).slice(0,MAXP),fmv=(mm[0]&&mm[0].presence.fm)||5;
@@ -7221,7 +7142,7 @@ function remoteParry(scene,x,y){
 let SEENQ={};
 function qApply(scene,p,ev){
   const t=ev[1];
-  // Multiplayer action effects are visualized for every player, including PvP opponents.
+  if(typeof PVP!=='undefined'&&PVP.on&&(p.presence.tm|0)!==PVP.team&&isWallBetween(player.x,player.y,ev[2],ev[3]))return;   // PvP: 벽 너머 적팀 행동은 안 보임
   window.__qRemote=true;
   try{
     if(t===1)remoteSlash(scene,ev[2],ev[3],ev[4]/100);
