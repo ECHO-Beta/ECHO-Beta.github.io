@@ -6990,6 +6990,7 @@ window.__ECHO_MUSIC=Music;
    ===================================================================== */
 (function(){
 'use strict';
+if(window.__mpFix2&&window.__mpFix2.v>=3)return;   // already installed (avoid double wrapping)
 const safe=f=>{try{return f();}catch(err){console.warn('[mpfix]',err);}};
 const wrap=(name,mk)=>{const o=window[name];if(typeof o==='function')window[name]=mk(o);};
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -7224,11 +7225,24 @@ function wrapParty(party){
         const lim=Date.now()-2000,q=(MP.outQ||[]).filter(ev=>ev[0]>lim).slice(-14);
         patch.Q=q.length?q:null;
         if(patch.E){
-          if(patch.X&&MP.outX)patch.X=MP.outX.filter(ev=>ev[0]>lim).slice(-40);
+          /* ROOT CAUSE of "p2 can't see enemy attacks":
+             the host logs events as [seq, CODE, ENEMY_ID, ...] but the guest's applyEvent() reads
+             [seq, ENEMY_ID, CODE, ...], so it looked for an enemy whose id equals the code (1,2,3,10..20),
+             never found one, and silently dropped every attack/skill/guard-shot event.
+             Swap the two fields on the wire (MP.outX itself stays untouched). */
+          const rawX=MP.outX?MP.outX.filter(ev=>ev[0]>lim).slice(-40):(patch.X||[]);
+          patch.X=rawX.map(ev=>[ev[0],ev[2],ev[1]].concat(ev.slice(3)));
           patch.E.forEach(row=>{
             const en=enemies.find(z=>z.id===row[0]);
             row[6]=!en?0:(en.mode==='investigate'?1:en.mode==='search'?2:0);
             row[7]=(en&&en.isGuard)?Math.round((en.coneAngle||0)*100):null;
+            if(row[5]==null)row[5]=!en?0:en.boss?((en.bState&&en.bState!=='idle')?1:0):(en.atkState==='windup'?1:en.atkState==='lunge'?2:0);
+            /* boss skill state, so guests can always draw the telegraph even if an event was missed */
+            const bo=en&&en.boss,tg=bo&&en._bTarget;
+            row[8]=bo?(en.bSkill||null):null;
+            row[9]=bo?({windup:1,active:2,recover:3}[en.bState]||0):0;
+            row[10]=(bo&&en._bAngle!==undefined)?Math.round(en._bAngle*100):null;
+            row[11]=tg?tg.x|0:0;row[12]=tg?tg.y|0:0;
           });
         }
       }
@@ -7300,6 +7314,12 @@ function smoothGhosts(){
 /* ---------------------------------------------------------------
    I. 게스트 화면: 몹 위치 보간 / ! ? 표시 / 가드 시야각 / 남이 때린 몹 피격 연출
 --------------------------------------------------------------- */
+function nearestTarget(e){      // 호스트 AI와 같은 기준: 가장 가까운 살아있는 플레이어
+  let best=null,bd=1e9;
+  if(!MP.dead&&player){bd=Math.hypot(player.x-e.x,player.y-e.y);best=player;}
+  for(const k in MP.g){const g=MP.g[k];if(!(g.h>0))continue;const d=Math.hypot(g.x-e.x,g.y-e.y);if(d<bd){bd=d;best=g;}}
+  return best;
+}
 function guestEnemies(scene,hostP,dt){
   const pr=hostP.presence||{},E=pr.E;
   if(!E||pr.R!==curRoom)return;
@@ -7319,6 +7339,29 @@ function guestEnemies(scene,hostP,dt){
         const v=e._sv||(e._sv={x:0,y:0}),k=Math.min(1,dt*10);
         v.x+=(s.vx-v.x)*k;v.y+=(s.vy-v.y)*k;
         if(e.body&&e.body.velocity){e.body.velocity.x=v.x;e.body.velocity.y=v.y;}
+      }
+    }
+
+    /* 공격 예고선 보강: 이벤트를 놓쳐도 스냅샷의 공격 상태(E[5], 보스는 E[8..12])로 직접 복원 */
+    if(e.boss){
+      const bs=r[9]|0;
+      if(bs>0&&r[8]&&(!e.bState||e.bState==='idle')){
+        const S=SKILL_DEF[r[8]]||{};
+        e.bState=['idle','windup','active','recover'][bs];e.bSkill=r[8];
+        e._bAngle=(r[10]==null)?undefined:r[10]/100;
+        e._bTarget=(r[11]||r[12])?{x:r[11],y:r[12]}:undefined;
+        e._t0=pn;
+        e.bTimer=bs===1?(S.wu||.3):bs===2?(S.act||.2):(S.rec||.3);
+        if(r[8]==='pulse')e._bR=0;
+      }
+    }else if(!e.isGuard){
+      const as=r[5]|0;
+      if(as>0&&e.atkState!=='windup'&&e.atkState!=='lunge'){
+        const tg=nearestTarget(e);
+        e.atkState=as===1?'windup':'lunge';
+        e.atkTimer=as===1?(e.wu||.18):(e.ld||.12);
+        e._ang=tg?Math.atan2(tg.y-e.y,tg.x-e.x):(e._ang||0);
+        e._t0=pn;
       }
     }
 
@@ -7399,8 +7442,9 @@ wrap('updateMarks',o=>function(dt){
   return r;
 });
 
-window.__mpFix2={sample,SB};
+window.__mpFix2={v:3,sample,SB};
 })();
+</script>
 </script>
 </body>
 </html>
