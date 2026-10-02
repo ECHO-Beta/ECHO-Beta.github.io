@@ -6967,175 +6967,439 @@ window.__ECHO_MUSIC=Music;
 })();
 </script>
 
-<script>
-/* ===== MP ENEMY ATTACK SYNC PATCH =====
-   원인: 멀티에서 적 AI는 호스트만 돌리고, 게스트에게는 위치/HP만 전달돼서
-   게스트 화면에는 windup(준비) / lunge(돌진) / 보스 스킬 모션이 한 번도 재생되지 않았음.
-   해결: 호스트가 "공격 상태가 바뀐 순간"을 이벤트(X)로 보내고, 게스트가 그걸 받아 같은 모션을 재생.
-   이 블록은 다른 <script>들 전부 뒤, </body> 바로 앞에 붙여넣으세요. */
+<script id="mpSyncFix2">
+/* =====================================================================
+   MP SYNC FIX v2  (호스트 방식 유지 / 기존 코드 수정 없이 붙여넣기용)
+   위치: 맨 아래 'MP ENEMY ATTACK SYNC PATCH' <script> 바로 뒤, </body> 바로 앞
+
+   고치는 것
+   [몹 움직임]
+    1. 게스트 화면의 몹/팀원이 뚝뚝 끊기고 순간이동하던 것 -> 스냅샷 보간(지연 렌더링) + 시간 보정
+    2. 호스트가 '가장 가까운 팀원' 기준으로 몹 AI를 돌릴 때 소리/게이지/가드 시야각/화면 번쩍임이
+       팀원 기준으로 계산되던 것 -> 항상 호스트 본인 기준
+    3. 팀원이 웅크려도(Shift) 몹이 70px에서 바로 발견하던 것 / 반대로 호스트가 웅크리면 팀원이 서 있어도 못 보던 것
+    4. 게스트가 카타나/병/패링만 해도 호스트 몹이 295px 안에서 전부 어그로 끌리던 것 (총만 해당되도록)
+    5. 게스트가 던진 병이 몹을 유인하지 못하던 것 (이제 병이 깨진 곳으로 몹이 조사하러 감)
+    6. 보스 광역기/투사체가 게스트에게 배율 무시하고 풀 데미지로 들어가던 것
+   [안 보이던 모션/이펙트]
+    7. 다른 플레이어의 카타나 베기 / 총 발사(총구 불꽃+탄도) / 병 깨짐 / 패링 이펙트와 소리 (모두에게 보임)
+    8. 게스트 화면에서 몹의 '!' '?' 표시, 가드의 시야 부채꼴
+    9. 다른 사람이 때린 몹의 피격 반짝임 + 데미지 숫자 (게스트 화면)
+   10. 남이 몹을 때릴 때 내 화면이 흔들리거나 슬로모션/번쩍임이 생기던 것, 호스트 패시브가 남의 공격에 발동하던 것
+   11. 게스트 공격에 패시브(장착한 것)가 적용 안 되던 것
+   ===================================================================== */
 (function(){
 'use strict';
-const NOW=()=>performance.now();
-const safe=f=>{try{f();}catch(err){console.warn('[mp-atk]',err);}};
-function mpX(a){MP.outX=MP.outX||[];MP.outX.push([mpSeq()].concat(a));if(MP.outX.length>40)MP.outX.splice(0,20);}
+const safe=f=>{try{return f();}catch(err){console.warn('[mpfix]',err);}};
+const wrap=(name,mk)=>{const o=window[name];if(typeof o==='function')window[name]=mk(o);};
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const realP=()=>(MP.on&&MP.me0)?MP.me0:player;
 
-/* ---------- 호스트: 공격 상태 변화를 이벤트로 기록 ---------- */
-const _eat=window.enemyAttackTick;
-if(typeof _eat==='function')window.enemyAttackTick=function(scene,e,dt,d){
-  const before=e.atkState;
-  const r=_eat.apply(this,arguments);
-  if(MP.on&&MP.host&&e.atkState!==before){
-    const code=e.atkState==='windup'?1:e.atkState==='lunge'?2:3;
-    safe(()=>mpX([code,e.id,Math.round(Math.atan2(player.y-e.y,player.x-e.x)*100),Math.round((e.atkTimer||0)*100)]));
-  }
-  return r;
+let _cm=null,_cmT=0;
+const mem=()=>{const t=performance.now();if(!_cm||t-_cmT>40){try{_cm=MP.getM?MP.getM():[];}catch(e){_cm=[];}_cmT=t;}return _cm;};
+const myCrouch=()=>!!((typeof keys!=='undefined'&&keys&&keys.SHIFT&&keys.SHIFT.isDown)||touchIn.crouch);
+const remoteCrouch=peer=>{const p=mem().find(x=>x.peer===peer);return !!(p&&p.presence&&p.presence.c);};
+
+/* ---------------------------------------------------------------
+   A. 소리/게이지/차폐는 항상 '호스트 본인' 기준
+      (몹 AI 루프 안에서는 전역 player가 팀원 고스트로 바뀌어 있어서 생기던 문제)
+--------------------------------------------------------------- */
+window.checkOcclusion=function(sx,sy){
+  const p=realP();
+  if(!p)return{isOccluded:false,cutoff:22000,volume:1};
+  if(isWallBetween(p.x,p.y,sx,sy))return{isOccluded:true,cutoff:0,volume:0};
+  return{isOccluded:false,cutoff:22000,volume:1};
+};
+window.emitEnemySound=function(x,y,maxR,color,kind){
+  const p=realP();if(!p)return;
+  kind=kind||'unknown';
+  const dist=Math.hypot(x-p.x,y-p.y);
+  if(dist>maxR)return;
+  if(isWallBetween(x,y,p.x,p.y))return;
+  addSoundGauge((ENEMY_GAUGE[kind]||1)*Phaser.Math.Clamp(1-dist/maxR,.3,1),'enemy');
+  const life=Math.min(1.35,Math.max(.25,maxR/520));
+  soundEvents.push({x,y,maxR,power:Phaser.Math.Clamp(maxR/240,.08,1),life,maxLife:life,color,kind});
 };
 
-const _bat=window.bossAttackTick;
-if(typeof _bat==='function')window.bossAttackTick=function(scene,e,dt,d){
-  const bs=e.bState,sk=e.bSkill,nb=bossBolts.length;
-  const r=_bat.apply(this,arguments);
-  if(MP.on&&MP.host&&(e.bState!==bs||e.bSkill!==sk)){
+/* ---------------------------------------------------------------
+   B. 남의 공격 처리 때 내 화면 효과 억제 + 패시브 오발동 방지
+--------------------------------------------------------------- */
+function quiet(fn){
+  const cam=camRef,fl=document.getElementById('flash');
+  const sv={s:cam.shake,z:cam.zoomTo,f:cam.flash},hs=window.hitStop;
+  const fs=fl?[fl.style.background,fl.style.transition,fl.style.opacity]:null;
+  const nop=function(){return cam;};
+  cam.shake=nop;cam.zoomTo=nop;cam.flash=nop;
+  window.hitStop=function(){};
+  window.__mpRemoteHit=true;
+  try{return fn();}
+  finally{
+    cam.shake=sv.s;cam.zoomTo=sv.z;cam.flash=sv.f;
+    window.hitStop=hs;window.__mpRemoteHit=false;
+    if(fl&&fs){fl.style.background=fs[0];fl.style.transition=fs[1];fl.style.opacity=fs[2];}
+  }
+}
+wrap('mpApply',o=>function(scene,ev){return quiet(()=>o.call(this,scene,ev));});
+wrap('echoPassiveOnAttack',o=>function(){
+  if(window.__mpRemoteHit)return{bonus:0,mult:1};
+  return o.apply(this,arguments);
+});
+/* 게스트: 내 공격에 패시브 적용 + 내가 때린 몹 표시 / 남이 죽인 몹은 카메라 연출 없이 */
+wrap('hitEnemy',o=>function(scene,e,base,also,type){
+  if(MP.on&&!MP.host&&!window.__mpRemoteHit&&e){
+    e._localHitAt=performance.now();
+    if(typeof window.echoPassiveOnAttack==='function'){
+      const p=window.echoPassiveOnAttack(type||'x',e,scene)||{bonus:0,mult:1};
+      base=((base||1)+(p.bonus||0))*(p.mult||1);
+    }
+  }
+  return o.call(this,scene,e,base,also,type);
+});
+wrap('killEnemy',o=>function(scene,e){
+  if(MP.on&&!MP.host&&e&&performance.now()-(e._localHitAt||0)>2500){
+    return quiet(()=>o.call(this,scene,e));
+  }
+  return o.call(this,scene,e);
+});
+
+/* ---------------------------------------------------------------
+   C. 게스트 소리 이벤트: 총소리만 호스트 몹을 어그로, 병은 조사(Q 이벤트로 처리)
+--------------------------------------------------------------- */
+wrap('addSoundGauge',o=>function(amount,src){
+  if(MP.on&&!MP.host&&src!=='enemy'&&amount!==12){
+    MP.host=true;                       // 호스트에게 보내는 어그로 이벤트만 막음
+    try{return o.call(this,amount,src);}finally{MP.host=false;}
+  }
+  return o.call(this,amount,src);
+});
+
+/* ---------------------------------------------------------------
+   D. 보스 공격 배율 (게스트 피격 데미지)
+--------------------------------------------------------------- */
+wrap('bossHitPlayer',o=>function(scene,e,mult){
+  window.__atkMult=mult;
+  try{return o.apply(this,arguments);}finally{window.__atkMult=undefined;}
+});
+window.mpEv=function(g,id,t,ang){
+  let mult=window.__atkMult;
+  if(mult===undefined){const e=enemies.find(x=>x.id===id);if(e&&e.boss)mult=.45;}   // 보스 투사체
+  MP.outA.push([mpSeq(),g.peer,id,t,+ang.toFixed(2),mult===undefined?1:+(+mult).toFixed(2)]);
+  if(MP.outA.length>30)MP.outA.splice(0,15);
+};
+wrap('mpAttacked',o=>function(scene,a){
+  const e=enemies.find(x=>x.id===a[2]);
+  if(e&&typeof a[5]==='number'&&a[5]!==1){
+    const old=e.dmg;
+    e.dmg=Math.max(1,Math.round((e.baseDmg||e.dmg||18)*a[5]));
+    try{return o.call(this,scene,a);}finally{e.dmg=old;}
+  }
+  return o.call(this,scene,a);
+});
+
+/* ---------------------------------------------------------------
+   E. 몹 발견(웅크리기 반영) - 호스트 AI가 쓰는 'crouching'은 호스트 값 하나뿐이라 보정
+--------------------------------------------------------------- */
+wrap('mpNear',o=>function(e){
+  const t=o.call(this,e);
+  safe(()=>{
+    if(e._fixCalm){e.tutCalm=false;e._fixCalm=false;}
+    if(!t||e.dead||e.alert||e.isGuard||e.tutDummy)return;
+    const hostCr=myCrouch();
+    const tgtCr=t.__remote?remoteCrouch(t.peer):hostCr;
+    if(tgtCr===hostCr)return;
+    const mult=e.boss?1.6:1,d=Math.hypot(t.x-e.x,t.y-e.y);
+    const need=(tgtCr?35:70)*mult,engine=(hostCr?35:70)*mult;
+    if(isWallBetween(e.x,e.y,t.x,t.y))return;
+    if(tgtCr){                       // 엔진은 70으로 판정하지만 대상은 웅크림(35)
+      if(d<engine&&d>=need){e.tutCalm=true;e._fixCalm=true;}
+    }else if(d<need&&d>=engine){     // 엔진은 35로 판정하지만 대상은 서 있음(70)
+      e.alert=true;e.tx=t.x;e.ty=t.y;
+    }
+  });
+  return t;
+});
+
+/* ---------------------------------------------------------------
+   F. 플레이어 행동 이벤트(Q): 베기/사격/병 깨짐/패링을 모두에게 전송
+--------------------------------------------------------------- */
+function qPush(a){
+  if(!MP.on||window.__qRemote)return;
+  const q=MP.outQ||(MP.outQ=[]);
+  q.push([mpSeq()].concat(a));
+  if(q.length>30)q.splice(0,15);
+}
+wrap('katanaSlashFX',o=>function(scene,x,y,ang){qPush([1,x|0,y|0,Math.round(ang*100)]);return o.apply(this,arguments);});
+wrap('tracer',o=>function(scene,x1,y1,x2,y2){qPush([2,x1|0,y1|0,x2|0,y2|0]);return o.apply(this,arguments);});
+wrap('parrySound',o=>function(){const p=realP();if(p)qPush([4,p.x|0,p.y|0]);return o.apply(this,arguments);});
+wrap('emitWave',o=>function(x,y,maxR,speed,color,width){
+  if(maxR===160&&speed===500&&color===0xffe066&&width===3)qPush([3,x|0,y|0]);   // 병이 깨진 순간
+  return o.apply(this,arguments);
+});
+
+function remoteSlash(scene,x,y,ang){
+  const arc=1.3;
+  for(let i=0;i<3;i++){
+    const g=scene.add.graphics().setDepth(11);
+    g.lineStyle(8-i*2,i===0?0xffffff:i===1?0xffc2c8:0xff3b4d,1-i*.25);
+    g.beginPath();g.arc(x,y,Math.max(8,62-i*6),ang-arc/2,ang+arc/2,false);g.strokePath();
+    scene.tweens.add({targets:g,alpha:0,duration:170+i*50,delay:i*10,onComplete:()=>g.destroy()});
+  }
+  for(let i=0;i<14;i++){
+    const t=-arc/2+arc*(i/13),a=ang+t+(Math.PI/2)*(Math.random()<.5?1:-1),sp=90+Math.random()*180;
+    particles.push({x:x+Math.cos(ang+t)*60,y:y+Math.sin(ang+t)*60,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:.25+Math.random()*.2,color:i%2?0xffffff:0xff8a94});
+  }
+  emitWave(x,y,58,900,0xff3b4d,4);
+  noiseBurst(.12,.4,2800,x,y);tone(210,.14,'triangle',.35,70,x,y);
+}
+function remoteShot(scene,x1,y1,x2,y2){
+  const a=Math.atan2(y2-y1,x2-x1),len=24+Math.random()*10,g=scene.add.graphics().setDepth(11);
+  g.fillStyle(0xffffff,1);g.slice(x1,y1,len,a-.35,a+.35,false);g.fillPath();
+  g.fillStyle(0xff9f2d,.75);g.slice(x1,y1,len*1.4,a-.18,a+.18,false);g.fillPath();
+  scene.tweens.add({targets:g,alpha:0,duration:90,onComplete:()=>g.destroy()});
+  tracer(scene,x1,y1,x2,y2);
+  emitWave(x1,y1,240,1400,0xffb52e,3);
+  noiseBurst(.07,.35,3000,x1,y1);tone(170,.14,'sine',.6,40,x1,y1);
+  if(Math.hypot(x2-x1,y2-y1)<455)impactRing(scene,x2,y2,0xffb52e,6);
+}
+function remoteBottle(scene,x,y){
+  emitWave(x,y,160,500,0xffe066,3);
+  burstParticles(x,y,0xffe066,14);
+  noiseBurst(.15,.3,900,x,y);
+}
+function remoteParry(scene,x,y){
+  emitWave(x,y,80,1200,0xff8a94,6);
+  burstParticles(x,y,0xff8a94,24);burstParticles(x,y,0xffffff,12);
+  tone(1200,.08,'square',.12,500,x,y);noiseBurst(.07,.4,4500,x,y);
+}
+let SEENQ={};
+function qApply(scene,p,ev){
+  const t=ev[1];
+  if(typeof PVP!=='undefined'&&PVP.on&&(p.presence.tm|0)!==PVP.team&&isWallBetween(player.x,player.y,ev[2],ev[3]))return;   // PvP: 벽 너머 적팀 행동은 안 보임
+  window.__qRemote=true;
+  try{
+    if(t===1)remoteSlash(scene,ev[2],ev[3],ev[4]/100);
+    else if(t===2)remoteShot(scene,ev[2],ev[3],ev[4],ev[5]);
+    else if(t===3)remoteBottle(scene,ev[2],ev[3]);
+    else if(t===4)remoteParry(scene,ev[2],ev[3]);
+  }finally{window.__qRemote=false;}
+  if(MP.host&&!(typeof PVP!=='undefined'&&PVP.on)){        // 호스트만 몹 반응 처리
+    if(t===3){
+      enemies.forEach(e=>{
+        if(e.dead||e.alert)return;
+        if(Math.hypot(e.x-ev[2],e.y-ev[3])<300&&!isWallBetween(e.x,e.y,ev[2],ev[3]))startInvestigate(scene,e,ev[2],ev[3]);
+      });
+    }else if(t===4){
+      enemies.forEach(o=>{
+        if(o.dead)return;
+        if(Math.hypot(o.x-ev[2],o.y-ev[3])<=PARRY_AGGRO_RANGE&&!isWallBetween(ev[2],ev[3],o.x,o.y)){o.alert=true;o.tx=ev[2];o.ty=ev[3];}
+      });
+    }
+  }
+}
+function qTick(scene,m){
+  m.forEach(p=>{
+    if(p.sameTab)return;
+    const pr=p.presence;if(!pr||pr.x===undefined)return;
+    const L=pr.Q;let s=SEENQ[p.peer];
+    if(s===undefined){SEENQ[p.peer]=L?L.reduce((a,v)=>Math.max(a,v[0]),0):0;return;}
+    if(!L)return;
+    let mx=s;
+    L.forEach(ev=>{if(ev[0]>s){mx=Math.max(mx,ev[0]);safe(()=>qApply(scene,p,ev));}});
+    SEENQ[p.peer]=mx;
+  });
+}
+
+/* ---------------------------------------------------------------
+   G. 전송 패치: 시간표(TS), 웅크림(c), 행동(Q), 몹 상태(E[6]=조사모드, E[7]=가드 시야각)
+      * 기존 ATTACK SYNC PATCH보다 '안쪽'에 끼워서 X 이벤트도 넉넉하게(40개) 보냄
+--------------------------------------------------------------- */
+function wrapParty(party){
+  if(party.__fix2)return;party.__fix2=true;
+  const p0=party.presence.bind(party);
+  party.presence=function(patch,force){
     safe(()=>{
-      const st={idle:0,windup:1,active:2,recover:3}[e.bState]||0,t=e._bTarget;
-      const bolts=bossBolts.slice(nb).map(b=>[b.x|0,b.y|0,Math.round(Math.atan2(b.vy,b.vx)*100),Math.round(Math.hypot(b.vx,b.vy))]);
-      mpX([10+st,e.id,e._bAngle===undefined?null:Math.round(e._bAngle*100),Math.round((e.bTimer||0)*100),e.bSkill||sk||'',t?t.x|0:0,t?t.y|0:0,bolts]);
+      if(patch&&('x' in patch)){
+        patch.TS=Date.now();
+        patch.c=myCrouch()?1:0;
+        const lim=Date.now()-2000,q=(MP.outQ||[]).filter(ev=>ev[0]>lim).slice(-14);
+        patch.Q=q.length?q:null;
+        if(patch.E){
+          if(patch.X&&MP.outX)patch.X=MP.outX.filter(ev=>ev[0]>lim).slice(-40);
+          patch.E.forEach(row=>{
+            const en=enemies.find(z=>z.id===row[0]);
+            row[6]=!en?0:(en.mode==='investigate'?1:en.mode==='search'?2:0);
+            row[7]=(en&&en.isGuard)?Math.round((en.coneAngle||0)*100):null;
+          });
+        }
+      }
     });
-  }
-  return r;
-};
-
-const _gs=window.guardShoot;
-if(typeof _gs==='function')window.guardShoot=function(scene,e){
-  const r=_gs.apply(this,arguments);
-  if(r&&MP.on&&MP.host)safe(()=>mpX([20,e.id,Math.round(Math.atan2(player.y-e.y,player.x-e.x)*100),Math.round(Math.hypot(player.x-e.x,player.y-e.y))]));
-  return r;
-};
-
-/* ---------- 호스트: 스냅샷에 이벤트(X)와 공격 상태(E[5]) 첨부 ---------- */
+    return p0(patch,force);
+  };
+}
 const _ms=window.__mpStart;
 if(typeof _ms==='function')window.__mpStart=function(party){
-  const r=_ms.apply(this,arguments);
-  if(MP.on&&party&&!party.__atkPatched){
-    party.__atkPatched=true;
-    const p0=party.presence.bind(party);
-    party.presence=function(patch,force){
-      if(patch&&patch.E){   // E가 있는 패치 = 호스트가 보내는 게임 스냅샷
-        safe(()=>{
-          patch.X=(MP.outX||[]).slice(-16);
-          patch.E.forEach(row=>{
-            const en=enemies.find(x=>x.id===row[0]);
-            row[5]=!en?0:en.boss?((en.bState&&en.bState!=='idle')?1:0):(en.atkState==='windup'?1:en.atkState==='lunge'?2:0);
-          });
-        });
-      }
-      return p0(patch,force);
-    };
-  }
-  return r;
+  safe(()=>{if(party)wrapParty(party);SB.reset();SEENQ={};MP.outQ=[];});
+  return _ms.apply(this,arguments);
 };
 
-/* ---------- 게스트: 받은 이벤트 재생 ---------- */
-function telegraph(e){
-  const g=coneGfx;e.visVal=1;
-  if(e.et==='brute'){
-    const R=e.hr||108,p=e.atkState==='windup'?Math.max(.15,1-e.atkTimer/(e.wu||.62)):1;
-    g.fillStyle(0xff6a2a,.1+.14*p);g.fillCircle(e.x,e.y,R*p);
-    g.lineStyle(3,0xff8a3d,.55+.35*p);g.strokeCircle(e.x,e.y,R);
-    return;
+/* ---------------------------------------------------------------
+   H. 스냅샷 보간: 서버(호스트)가 보낸 시간표 기준으로 100ms(몹)/70ms(팀원) 늦게 부드럽게 재생
+--------------------------------------------------------------- */
+const SB={src:{},p:new Map(),e:new Map(),room:null,reset(){this.src={};this.p=new Map();this.e=new Map();this.room=null;}};
+function pushSnap(map,key,ts,x,y){
+  let b=map.get(key);if(!b){b=[];map.set(key,b);}
+  const L=b[b.length-1];if(L&&L.ts>=ts)return;
+  b.push({ts,x,y});if(b.length>10)b.shift();
+}
+function ingest(p){
+  const pr=p.presence;if(!pr||pr.x===undefined)return;
+  const st=SB.src[p.peer]||(SB.src[p.peer]={last:null,off:null,ts:0});
+  if(st.last===pr)return;st.last=pr;
+  const recv=Date.now();let ts=pr.TS;if(typeof ts!=='number')ts=recv;
+  if(ts<=st.ts)return;st.ts=ts;
+  const d=recv-ts;st.off=st.off===null?d:Math.min(d,st.off+2);   // 시계 차이 + 최소 지연 추정
+  pushSnap(SB.p,p.peer,ts,pr.x,pr.y);
+  if(pr.E){
+    if(SB.room!==pr.R){SB.room=pr.R;SB.e=new Map();}
+    if(pr.R===curRoom)pr.E.forEach(r=>pushSnap(SB.e,r[0],ts,r[1],r[2]));
   }
-  const a=e._ang||0;
-  if(e.atkState==='windup'){
-    const prog=Math.min(1,Math.max(0,1-e.atkTimer/(e.wu||.18)));
-    g.lineStyle(3,0xff2020,.5+.4*prog);
-    g.lineBetween(e.x,e.y,e.x+Math.cos(a)*(26+prog*18),e.y+Math.sin(a)*(26+prog*18));
-    g.lineStyle(2,0xff5050,.4+.25*prog);g.strokeCircle(e.x,e.y,15+prog*7);
-  }else{
-    g.lineStyle(4,0xff3030,.9);
-    g.lineBetween(e.x-Math.cos(a)*16,e.y-Math.sin(a)*16,e.x+Math.cos(a)*28,e.y+Math.sin(a)*28);
-    g.lineStyle(2,0xffffff,.6);
-    g.lineBetween(e.x-Math.cos(a)*10,e.y-Math.sin(a)*10,e.x+Math.cos(a)*22,e.y+Math.sin(a)*22);
+}
+function sample(b,rt){
+  const n=b.length;if(!n)return null;
+  const L=b[n-1];
+  if(n===1)return{x:L.x,y:L.y,vx:0,vy:0};
+  if(rt>=L.ts){
+    const P=b[n-2],span=(L.ts-P.ts)||1;
+    if(Math.hypot(L.x-P.x,L.y-P.y)>140)return{x:L.x,y:L.y,vx:0,vy:0};
+    const vx=(L.x-P.x)/span*1000,vy=(L.y-P.y)/span*1000,ex=Math.min(rt-L.ts,60)/1000;
+    return{x:L.x+vx*ex,y:L.y+vy*ex,vx,vy};
+  }
+  for(let i=n-1;i>=1;i--){
+    const a=b[i-1],c=b[i];
+    if(rt>=a.ts){
+      const span=(c.ts-a.ts)||1,k=(rt-a.ts)/span;
+      if(Math.hypot(c.x-a.x,c.y-a.y)>140){const q=k<.5?a:c;return{x:q.x,y:q.y,vx:0,vy:0};}
+      return{x:a.x+(c.x-a.x)*k,y:a.y+(c.y-a.y)*k,vx:(c.x-a.x)/span*1000,vy:(c.y-a.y)/span*1000};
+    }
+  }
+  return{x:b[0].x,y:b[0].y,vx:0,vy:0};
+}
+function smoothGhosts(){
+  const now=Date.now();
+  for(const k in MP.g){
+    const g=MP.g[k],st=SB.src[k],b=SB.p.get(k);
+    if(!g||!st||!b||st.off===null)continue;
+    const s=sample(b,now-st.off-70);if(!s)continue;
+    g.x=s.x;g.y=s.y;
+    if(Math.abs(s.vx)>10)g.setFlipX(s.vx>0);
+    g.setAngle(clamp(s.vx*.02,-6,6));
+    if(g.tag)g.tag.setPosition(g.x,g.y-22);
   }
 }
 
-function applyEvent(scene,ev){
-  const e=enemies.find(x=>x.id===ev[1]);
-  if(!e||e.dead||!e.active)return;
-  const code=ev[2],t=NOW();
-  if(code<10){                                   // 일반 적
-    const slam=e.et==='brute';
-    if(code===1){
-      e.atkState='windup';e.atkTimer=Math.max(.05,ev[4]/100);e._ang=ev[3]/100;e._t0=t;
-      tone(slam?150:900,.1,slam?'sawtooth':'square',.12,slam?60:300,e.x,e.y);
-      emitEnemySound(e.x,e.y,slam?330:260,COL.soldier,'attack');
-      scene.tweens.add({targets:e,scale:e.scale*(slam?1.22:1.5),duration:slam?260:90,yoyo:true});
-    }else if(code===2){
-      e.atkState='lunge';e.atkTimer=Math.max(.05,ev[4]/100);e._ang=ev[3]/100;e._t0=t;
-    }else{
-      if(slam&&e.atkState==='lunge'){
-        emitWave(e.x,e.y,130,900,0xff8a3d,4);burstParticles(e.x,e.y,0xff8a3d,22);
-        camRef.shake(170,.012);tone(70,.25,'sawtooth',.18,35,e.x,e.y);noiseBurst(.12,.2,900,e.x,e.y);
-      }
-      e.atkState='idle';
-    }
-  }else if(code<20){                             // 보스 스킬
-    const st=['idle','windup','active','recover'][code-10],sk=ev[5]||null;
-    e.bState=st;e.bSkill=st==='idle'?null:sk;e.bTimer=ev[4]/100;e._t0=t;
-    const ang=ev[3]==null?undefined:ev[3]/100,tg=(ev[6]||ev[7])?{x:ev[6],y:ev[7]}:undefined;
-    if(st==='windup'&&sk)safe(()=>bossSkillStart(scene,e,sk));   // 준비 소리 재생 (데미지 없음)
-    e._bAngle=ang;e._bTarget=tg;
-    if(st==='windup'&&sk==='pulse')e._bR=0;
-    if(st==='active'&&(ev[8]||[]).length){                        // 보스 투사체: 보이기만 함 (판정은 호스트)
-      ev[8].forEach(b=>bossBolts.push({x:b[0],y:b[1],vx:Math.cos(b[2]/100)*b[3],vy:Math.sin(b[2]/100)*b[3],life:2.2,boss:e,dmgMul:0,target:null}));
-      tone(600,.12,'sawtooth',.16,250,e.x,e.y);
-    }
-  }else if(code===20){                           // 가드 사격
-    const a=ev[3]/100,d=ev[4];
-    guardMuzzleFlash(scene,e.x,e.y,a);
-    guardBulletFX(scene,e.x,e.y,e.x+Math.cos(a)*d,e.y+Math.sin(a)*d);
-    if(e.et==='heavy'){[-.28,.28].forEach(o=>guardBulletFX(scene,e.x,e.y,e.x+Math.cos(a+o)*d,e.y+Math.sin(a+o)*d));camRef.shake(120,.011);}
-    emitWave(e.x,e.y,150,1000,0x5b8cff,2);emitEnemySound(e.x,e.y,200,COL.guard,'gun');
-    tone(125+Math.random()*25,.11,'square',.14,65,e.x,e.y);noiseBurst(.05,.15,2400,e.x,e.y);
-    camRef.shake(80,.006);
-  }
-}
-
-function guestTick(dt){
-  const m=MP.getM&&MP.getM(),hostP=m&&m[0];
-  if(!hostP||hostP.sameTab||!gameScene)return;
-  const pr=hostP.presence||{},X=pr.X||[];
-  if(MP.lastX===undefined){MP.lastX=X.reduce((a,v)=>Math.max(a,v[0]),0);}   // 합류 전 오래된 이벤트는 무시
-  else X.forEach(ev=>{if(ev[0]>MP.lastX){MP.lastX=ev[0];safe(()=>applyEvent(gameScene,ev));}});
-  const st={};(pr.E||[]).forEach(r=>{st[r[0]]=r[5];});
-  const t=NOW();
+/* ---------------------------------------------------------------
+   I. 게스트 화면: 몹 위치 보간 / ! ? 표시 / 가드 시야각 / 남이 때린 몹 피격 연출
+--------------------------------------------------------------- */
+function guestEnemies(scene,hostP,dt){
+  const pr=hostP.presence||{},E=pr.E;
+  if(!E||pr.R!==curRoom)return;
+  const st=SB.src[hostP.peer],rows=new Map();
+  E.forEach(r=>rows.set(r[0],r));
+  const rt=(st&&st.off!==null)?Date.now()-st.off-100:null,pn=performance.now();
+  const crouch=myCrouch();
   enemies.forEach(e=>{
     if(!e||e.dead||!e.active)return;
-    if(e.body&&e.body.velocity&&e._gx!==undefined&&dt>0){e.body.velocity.x=(e.x-e._gx)/dt;e.body.velocity.y=(e.y-e._gy)/dt;}   // 걷기 애니메이션용
-    e._gx=e.x;e._gy=e.y;
-    if(e.boss){
-      if(e.bState&&e.bState!=='idle'){
-        e.bTimer-=dt;
-        if(e.bState==='active'&&e.bSkill==='pulse')e._bR=(e._bR||0)+dt*520;
-        if(st[e.id]===0&&t-(e._t0||0)>200||e.bTimer<-1.5)e.bState='idle';
-        else safe(()=>bossSkillFX(gameScene,e));
+    const r=rows.get(e.id);if(!r)return;
+
+    /* 위치 */
+    if(rt!==null){
+      const b=SB.e.get(e.id),s=b&&sample(b,rt);
+      if(s){
+        e.x=s.x;e.y=s.y;
+        const v=e._sv||(e._sv={x:0,y:0}),k=Math.min(1,dt*10);
+        v.x+=(s.vx-v.x)*k;v.y+=(s.vy-v.y)*k;
+        if(e.body&&e.body.velocity){e.body.velocity.x=v.x;e.body.velocity.y=v.y;}
       }
-      return;
     }
-    if(e.atkState==='windup'||e.atkState==='lunge'){
-      e.atkTimer-=dt;
-      if(e.atkTimer<-.3||(st[e.id]===0&&t-(e._t0||0)>150))e.atkState='idle';
-      else telegraph(e);
+
+    /* ! / ? 표시 */
+    const alert=!!r[4],mode=r[6]|0;
+    if(alert&&!e._fa){showMark(scene,e,'!','#ff3b4d',1.1);tone(760,.1,'square',.07,980,e.x,e.y);}
+    else if(!alert){
+      if(mode===1&&e._fm!==1)showMark(scene,e,'!','#ff3b4d',1.1);
+      else if(mode===2&&e._fm!==2)showMark(scene,e,'?','#ffe066',5.5);
+      else if(mode===0&&e._fm===2&&e.mark)e.markT=0;
+    }
+    e._fa=alert;e._fm=mode;
+
+    /* 남이 때린 몹 피격 연출 (내가 때린 건 이미 즉시 연출됨) */
+    const hpv=r[3]/10;
+    if(e._lhp===undefined)e._lhp=hpv;
+    if(hpv<e._lhp-.04&&hpv>0&&pn-(e._localHitAt||0)>700){
+      e.setTintFill(0xffffff);
+      scene.time.delayedCall(70,()=>{if(e.active){e.clearTint();if(e.tn)e.setTint(e.tn);}});
+      floatText(scene,e.x,e.y-10,'-'+(e._lhp-hpv).toFixed(1),'#ffaaaa');
+      burstParticles(e.x,e.y,0xffffff,8);
+      heavyHitSound(e.x,e.y,false);
+    }
+    e._lhp=hpv;
+
+    /* 가드 시야 부채꼴 (호스트와 같은 조건: 나와 가드 사이에 벽이 없을 때) */
+    if(e.isGuard&&r[7]!=null){
+      if(e._conA!==r[7]){e._conA=r[7];e._conT=pn;}
+      const ang=r[7]/100+Math.min(.12,(pn-e._conT)/1000)*.6;
+      if(!isWallBetween(player.x,player.y,e.x,e.y)){
+        coneGfx.fillStyle(0x5b8cff,.10);
+        coneGfx.slice(e.x,e.y,crouch?85:150,ang-.5,ang+.5,false);
+        coneGfx.fillPath();
+      }
     }
   });
 }
 
-/* coneGfx는 update() 안에서 매 프레임 clear되므로, clear 뒤에 호출되는 updateMarks에 얹어서 그림 */
-const _um=window.updateMarks;
-if(typeof _um==='function')window.updateMarks=function(dt){
-  const r=_um.apply(this,arguments);
-  if(MP.on&&!MP.host)safe(()=>guestTick(dt));
+/* ---------------------------------------------------------------
+   J. 설치: 가드 시야각/카메라 효과도 '호스트 본인 기준'으로
+--------------------------------------------------------------- */
+function installOnce(){
+  if(coneGfx&&!coneGfx.__fix2){
+    coneGfx.__fix2=true;
+    const os=coneGfx.slice;
+    coneGfx.slice=function(x,y,r,a0,a1,cc){
+      // 호스트 AI가 팀원 기준으로 그리는 시야각은 호스트가 못 보는 위치면 숨김
+      if(MP.on&&MP.host&&MP.me0&&player!==MP.me0&&isWallBetween(MP.me0.x,MP.me0.y,x,y))r=0;
+      return os.call(this,x,y,r,a0,a1,cc);
+    };
+  }
+  const cam=camRef;
+  if(cam&&!cam.__fix2){
+    cam.__fix2=true;
+    ['shake','flash'].forEach(k=>{
+      const o=cam[k];
+      cam[k]=function(){
+        if(MP.on&&MP.host&&MP.me0&&player!==MP.me0)return cam;   // 몹이 팀원을 상대하는 장면에서 호스트 화면은 흔들지 않음
+        return o.apply(cam,arguments);
+      };
+    });
+  }
+}
+
+function mpFixTick(scene,dt){
+  const m=MP.getM?MP.getM():null;if(!m||!m.length)return;
+  const hostP=m[0];if(!m.some(p=>p.sameTab))return;
+  installOnce();
+  m.forEach(p=>{if(!p.sameTab)ingest(p);});
+  qTick(scene,m);
+  smoothGhosts();
+  if(!hostP.sameTab)guestEnemies(scene,hostP,dt);
+}
+/* coneGfx는 update() 안에서 매 프레임 clear되므로 clear 이후에 호출되는 updateMarks에 얹음 */
+wrap('updateMarks',o=>function(dt){
+  const r=o.apply(this,arguments);
+  if(MP.on&&gameScene)safe(()=>mpFixTick(gameScene,dt));
   return r;
-};
+});
+
+window.__mpFix2={sample,SB};
 })();
 </script>
 </body>
