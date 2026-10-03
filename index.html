@@ -1559,7 +1559,7 @@ function katanaHitFX(scene,x,y,ang){
   }
 }
 
-function enemyAttackTelegraphFX(e){
+function enemyAttackTelegraphFX(e,targetX,targetY){
   if(e.et==='brute'&&(e.atkState==='windup'||e.atkState==='lunge')){
     e.visVal=1;
     const R=e.hr||108,p=e.atkState==='windup'?Math.max(.15,1-e.atkTimer/(e.wu||.62)):1;
@@ -1570,7 +1570,9 @@ function enemyAttackTelegraphFX(e){
   if(e.atkState==='windup'){
     e.visVal=1;
 
-    const a=Math.atan2(player.y-e.y,player.x-e.x);
+    const tx=Number.isFinite(+targetX)?+targetX:player.x;
+    const ty=Number.isFinite(+targetY)?+targetY:player.y;
+    const a=Math.atan2(ty-e.y,tx-e.x);
     const prog=1-(e.atkTimer/(e.wu||.18));
 
     coneGfx.lineStyle(3,0xff2020,.5+.4*prog);
@@ -7533,6 +7535,23 @@ function guestEnemies(scene,hostP,dt){
         e.atkTimer=as===1?(e.wu||.18):(e.ld||.12);
         e._ang=tg?Math.atan2(tg.y-e.y,tg.x-e.x):(e._ang||0);
         e._t0=pn;
+      }
+    }
+
+    /* Server-authoritative attack telegraph:
+       serverAuth disables the local enemy-AI loop, so the normal
+       enemyAttackTelegraphFX() call never runs. Re-render it here
+       from the authoritative E[5] attack state on EVERY client. */
+    if(!e.boss){
+      const tg=nearestTarget(e);
+      if((e.atkState==='windup'||e.atkState==='lunge')&&tg){
+        enemyAttackTelegraphFX(e,tg.x,tg.y);
+      }
+    }else{
+      // Boss skill telegraphs are also disabled with the local AI loop.
+      // Re-run the existing renderer from the authoritative boss state.
+      if(e.bState&&e.bState!=='idle'){
+        bossSkillFX(scene,e);
       }
     }
 
