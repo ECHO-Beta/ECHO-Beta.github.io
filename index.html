@@ -8430,6 +8430,214 @@ window.__mpFix2={v:3,sample,SB};
   }, 1000);
 })();
 
+/* ===== ECHO FRIENDS: friend list, online status, party invites =====
+   Needs friends.sql to be run once in Supabase. Uses the existing account client (accountSB).
+   - friend list / requests: tables profiles + friendships (RLS protected)
+   - online status: Realtime Presence on channel "ssk-online" (name + coarse status only, never party codes)
+   - invites: Realtime Broadcast on the same channel; the receiver ignores anyone who is not an accepted friend */
+(function () {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const sb = () => (typeof accountSB !== 'undefined' && accountSB) ? accountSB : null;
+  const nameOf = v => String(v == null ? '' : v).replace(/[^A-Za-z0-9_\-가-힣]/g, '').slice(0, 12).toUpperCase();
+  const safe = f => { try { return f(); } catch (e) { console.warn('[friends]', e); } };
+  const beep = f => safe(() => { ensureAudio(); tone(f, .05, 'square', .07, f * .6); });
+
+  const S = { uid: null, name: '', friends: [], incoming: [], outgoing: [], online: new Map(), ch: null, rt: null, tabs: 'list', timers: [], lastTrack: '', seenReq: new Set(), inviteAt: {}, started: false };
+  const panel = $('friendsPanel');
+  if (!panel) return;
+
+  /* ---------- pure helpers (also used by the self-test) ---------- */
+  function partition(rows, uid) {
+    const friends = [], incoming = [], outgoing = [];
+    (rows || []).forEach(r => {
+      const mine = r.requester === uid;
+      const other = mine ? { uid: r.addressee, name: r.addressee_name } : { uid: r.requester, name: r.requester_name };
+      const o = { id: r.id, uid: other.uid, name: nameOf(other.name) };
+      if (r.status === 'accepted') friends.push(o);
+      else if (mine) outgoing.push(o); else incoming.push(o);
+    });
+    return { friends, incoming, outgoing };
+  }
+  function validInvite(p, uid, friends) {
+    return !!(p && p.to === uid && friends.some(f => f.uid === p.from) && /^[A-Z0-9]{5}$/.test(String(p.code || '')) && (p.mode === 'dungeon' || p.mode === 'pvp'));
+  }
+  window.__friendsTest = { partition, validInvite };
+
+  /* ---------- status text ---------- */
+  function statusText() {
+    if (window.__sskParty) return 'IN PARTY';
+    if (typeof menuActive !== 'undefined' && menuActive) return 'IN MENU';
+    if (window.__TUT_ON) return 'TRAINING';
+    return 'IN GAME' + (typeof curRoom === 'number' && curRoom > 0 ? ' · ROOM ' + curRoom : '');
+  }
+  function track() {
+    if (!S.ch || !S.uid) return;
+    const st = statusText(), key = S.name + '|' + st;
+    if (key === S.lastTrack) return;
+    S.lastTrack = key;
+    S.ch.track({ n: S.name, st }).catch(() => { });
+  }
+
+  /* ---------- toast ---------- */
+  function toast(text, buttons, ms) {
+    let box = $('friendToast');
+    if (!box) { box = document.createElement('div'); box.id = 'friendToast'; document.body.appendChild(box); }
+    const t = document.createElement('div'); t.className = 'frToast';
+    const sp = document.createElement('span'); sp.textContent = text; t.appendChild(sp);
+    const kill = () => { try { t.remove(); } catch (e) { } };
+    (buttons || []).forEach(([label, fn]) => { const b = document.createElement('button'); b.className = 'sbtn'; b.textContent = label; b.onclick = () => { kill(); safe(fn); }; t.appendChild(b); });
+    box.appendChild(t); setTimeout(kill, ms || 12000);
+  }
+
+  /* ---------- data ---------- */
+  async function loadFriends() {
+    const c = sb(); if (!c || !S.uid) return;
+    const { data, error } = await c.from('ssk_friendships').select('*');
+    if (error) { setMsg('FRIEND LIST FAILED: ' + String(error.message || '').toUpperCase().slice(0, 60)); return; }
+    const p = partition(data, S.uid);
+    p.incoming.forEach(r => { if (!S.seenReq.has(r.id)) { S.seenReq.add(r.id); if (S.started && S.firstLoad) toast(r.name + ' SENT YOU A FRIEND REQUEST', [['VIEW', () => open('req')]]); } });
+    S.firstLoad = true;
+    S.friends = p.friends; S.incoming = p.incoming; S.outgoing = p.outgoing;
+    render();
+  }
+  async function start(name) {
+    const c = sb(); if (!c || S.name === name && S.uid) return;
+    stop();
+    const { data } = await c.auth.getUser(); const user = data && data.user; if (!user) return;
+    S.uid = user.id; S.name = name; S.started = true; S.firstLoad = false;
+    const up = await c.from('ssk_profiles').upsert({ user_id: S.uid, username: name }, { onConflict: 'user_id' });
+    if (up.error) console.warn('[friends] profile upsert failed (did you run friends.sql?)', up.error.message);
+    await loadFriends();
+    S.ch = c.channel('ssk-online', { config: { presence: { key: S.uid }, broadcast: { self: false } } });
+    S.ch.on('presence', { event: 'sync' }, () => {
+      const st = S.ch.presenceState(), m = new Map();
+      Object.keys(st).forEach(k => { const a = st[k]; const q = a && a[a.length - 1]; if (k !== S.uid && q) m.set(k, { name: nameOf(q.n), st: String(q.st || 'ONLINE').slice(0, 24) }); });
+      S.online = m; render();
+    });
+    S.ch.on('broadcast', { event: 'invite' }, ev => safe(() => onInvite(ev.payload)));
+    S.ch.subscribe(s => { if (s === 'SUBSCRIBED') { S.lastTrack = ''; track(); } });
+    S.rt = c.channel('ssk-fr-' + S.uid).on('postgres_changes', { event: '*', schema: 'public', table: 'ssk_friendships' }, () => loadFriends()).subscribe();
+    S.timers = [setInterval(track, 4000), setInterval(loadFriends, 30000)];
+    render();
+  }
+  function stop() {
+    const c = sb();
+    S.timers.forEach(clearInterval); S.timers = [];
+    try { if (c && S.ch) c.removeChannel(S.ch); } catch (e) { }
+    try { if (c && S.rt) c.removeChannel(S.rt); } catch (e) { }
+    S.ch = null; S.rt = null; S.uid = null; S.name = ''; S.friends = []; S.incoming = []; S.outgoing = []; S.online = new Map(); S.started = false; S.seenReq = new Set(); S.lastTrack = '';
+    render();
+  }
+
+  /* ---------- actions ---------- */
+  function setMsg(t) { const el = $('frStatus'); if (el) el.textContent = t || ''; }
+  async function sendRequest(raw) {
+    const c = sb(), name = nameOf(raw);
+    if (!c || !S.uid) { setMsg('LOGIN FIRST'); return; }
+    if (name.length < 2) { setMsg('ENTER A NAME (2-12 CHARACTERS)'); return; }
+    if (name === S.name) { setMsg("THAT'S YOU"); return; }
+    setMsg('SEARCHING...');
+    const { data: p, error } = await c.from('ssk_profiles').select('user_id,username').eq('username', name).maybeSingle();
+    if (error) { setMsg('SEARCH FAILED - RUN friends.sql FIRST?'); return; }
+    if (!p) { setMsg('NO PLAYER NAMED ' + name + ' (THEY MUST LOG IN ONCE)'); return; }
+    if (S.friends.some(f => f.uid === p.user_id)) { setMsg('ALREADY FRIENDS'); return; }
+    if (S.outgoing.some(f => f.uid === p.user_id)) { setMsg('REQUEST ALREADY SENT'); return; }
+    const inc = S.incoming.find(f => f.uid === p.user_id);
+    if (inc) { await accept(inc); setMsg('YOU ARE NOW FRIENDS WITH ' + name); return; }
+    const ins = await c.from('ssk_friendships').insert({ requester: S.uid, addressee: p.user_id, requester_name: S.name, addressee_name: p.username });
+    if (ins.error) { setMsg(ins.error.code === '23505' ? 'ALREADY CONNECTED' : 'REQUEST FAILED'); return; }
+    setMsg('REQUEST SENT TO ' + name); beep(900); $('frName') && ($('frName').value = ''); loadFriends();
+  }
+  async function accept(r) { const c = sb(); await c.from('ssk_friendships').update({ status: 'accepted' }).eq('id', r.id); await loadFriends(); beep(900); }
+  async function remove(r) { const c = sb(); await c.from('ssk_friendships').delete().eq('id', r.id); await loadFriends(); beep(500); }
+  function invite(f) {
+    const p = window.__sskParty;
+    if (!S.ch || !p) { setMsg('OPEN A CO-OP / PVP LOBBY FIRST'); return; }
+    S.ch.send({ type: 'broadcast', event: 'invite', payload: { to: f.uid, from: S.uid, n: S.name, code: p.code, mode: p.mode, region: p.region || '' } });
+    setMsg('INVITE SENT TO ' + f.name); beep(800);
+  }
+  function onInvite(p) {
+    if (!validInvite(p, S.uid, S.friends)) return;
+    const now = Date.now(); if (now - (S.inviteAt[p.from] || 0) < 15000) return; S.inviteAt[p.from] = now;
+    const nm = nameOf(p.n) || 'FRIEND', label = p.mode === 'pvp' ? 'PVP' : 'CO-OP';
+    beep(1000);
+    toast(nm + ' INVITED YOU TO ' + label, [['JOIN', () => joinInvite(p)], ['IGNORE', () => { }]], 20000);
+  }
+  function joinInvite(p) {
+    if (typeof menuActive === 'undefined' || !menuActive) { toast('FINISH YOUR RUN FIRST, THEN ASK AGAIN', [], 4000); return; }
+    close(true);
+    ['modePanel', 'howPanel', 'settingsPanel', 'loginPanel'].forEach(id => { const el = $(id); el && el.classList.add('hidden'); });
+    if (!window.__sskJoinInvite || !window.__sskJoinInvite(p.code, p.mode, p.region)) toast('COULD NOT OPEN THE LOBBY', [], 4000);
+  }
+
+  /* ---------- UI ---------- */
+  function mkBtn(label, fn, cls) { const b = document.createElement('button'); b.className = 'sbtn' + (cls ? ' ' + cls : ''); b.textContent = label; b.onclick = () => { beep(700); fn(); }; return b; }
+  function row(dotOn, name, sub, btns) {
+    const r = document.createElement('div'); r.className = 'frRow' + (dotOn ? ' on' : '');
+    const d = document.createElement('span'); d.className = 'frDot'; d.textContent = dotOn ? '■' : '□';
+    const n = document.createElement('span'); n.className = 'frName'; n.textContent = name;
+    if (sub) { const s = document.createElement('small'); s.textContent = sub; n.appendChild(s); }
+    const b = document.createElement('span'); b.className = 'frBtns'; btns.forEach(x => b.appendChild(x));
+    r.appendChild(d); r.appendChild(n); r.appendChild(b); return r;
+  }
+  function render() {
+    const onlineN = S.friends.filter(f => S.online.has(f.uid)).length;
+    const badge = $('frBadge'); if (badge) badge.textContent = S.incoming.length ? '!' + S.incoming.length : (onlineN ? onlineN + ' ON' : '');
+    const rq = $('frReqN'); if (rq) rq.textContent = S.incoming.length ? ' (' + S.incoming.length + ')' : '';
+    if (panel.classList.contains('hidden')) return;
+    const who = $('frWho'), list = $('frList');
+    panel.querySelectorAll('[data-ft]').forEach(b => b.classList.toggle('on', b.dataset.ft === S.tabs));
+    list.textContent = '';
+    if (!S.uid) {
+      who.textContent = 'FRIENDS NEED AN ACCOUNT.';
+      const e = document.createElement('div'); e.className = 'frEmpty'; e.textContent = 'LOG IN OR SIGN UP TO ADD FRIENDS AND SEE WHO IS ONLINE.'; list.appendChild(e);
+      list.appendChild(mkBtn('LOGIN', () => { close(true); window.__openLogin && window.__openLogin(); }, 'hot')); return;
+    }
+    who.textContent = 'SIGNED IN AS ' + S.name + ' · ' + onlineN + ' / ' + S.friends.length + ' FRIENDS ONLINE';
+    if (S.tabs === 'list') {
+      if (!S.friends.length) { const e = document.createElement('div'); e.className = 'frEmpty'; e.textContent = 'NO FRIENDS YET. OPEN "ADD" AND TYPE THEIR LOGIN NAME.'; list.appendChild(e); }
+      [...S.friends].sort((a, b) => (S.online.has(b.uid) - S.online.has(a.uid)) || (a.name < b.name ? -1 : 1)).forEach(f => {
+        const o = S.online.get(f.uid), inv = mkBtn('INVITE', () => invite(f), 'hot');
+        inv.disabled = !o || !window.__sskParty;
+        let rm = null; rm = mkBtn('✕', () => { if (rm.dataset.c === '1') remove(f); else { rm.dataset.c = '1'; rm.textContent = 'SURE?'; setTimeout(() => { rm.dataset.c = ''; rm.textContent = '✕'; }, 2500); } });
+        list.appendChild(row(!!o, f.name, o ? o.st : 'OFFLINE', [inv, rm]));
+      });
+      if (S.friends.length && !window.__sskParty) { const h = document.createElement('div'); h.className = 'frEmpty'; h.textContent = 'TO INVITE: PLAY → CO-OP (OR PVP) → THEN OPEN FRIENDS FROM THE READY ROOM.'; list.appendChild(h); }
+    } else if (S.tabs === 'req') {
+      if (!S.incoming.length && !S.outgoing.length) { const e = document.createElement('div'); e.className = 'frEmpty'; e.textContent = 'NO PENDING REQUESTS.'; list.appendChild(e); }
+      S.incoming.forEach(r => list.appendChild(row(false, r.name, 'WANTS TO BE FRIENDS', [mkBtn('ACCEPT', () => accept(r), 'hot'), mkBtn('DECLINE', () => remove(r))])));
+      S.outgoing.forEach(r => list.appendChild(row(false, r.name, 'REQUEST SENT', [mkBtn('CANCEL', () => remove(r))])));
+    } else {
+      const a = document.createElement('div'); a.className = 'frAdd';
+      const i = document.createElement('input'); i.id = 'frName'; i.maxLength = 12; i.placeholder = "FRIEND'S LOGIN NAME"; i.autocomplete = 'off'; i.spellcheck = false;
+      ['keydown', 'keyup'].forEach(t => i.addEventListener(t, e => { e.stopPropagation(); if (t === 'keydown' && e.key === 'Enter') sendRequest(i.value); }));
+      a.appendChild(i); a.appendChild(mkBtn('SEND', () => sendRequest(i.value), 'hot')); list.appendChild(a);
+      const h = document.createElement('div'); h.className = 'frEmpty'; h.textContent = 'THEY NEED AN ACCOUNT AND MUST HAVE LOGGED IN AT LEAST ONCE.'; list.appendChild(h);
+    }
+  }
+  function open(tab) {
+    S.tabs = tab || 'list'; panel.classList.remove('hidden'); setMsg(''); render();
+    if (S.uid) loadFriends();
+  }
+  function close(silent) { panel.classList.add('hidden'); if (!silent) beep(500); try { document.activeElement && document.activeElement.blur(); } catch (e) { } }
+  window.__openFriends = () => open('list');
+  window.__friendsOpen = () => !panel.classList.contains('hidden');
+  panel.querySelectorAll('[data-ft]').forEach(b => b.onclick = () => { beep(600); S.tabs = b.dataset.ft; setMsg(''); render(); });
+  $('frBack').onclick = () => close();
+  const lbf = $('lbFriends'); if (lbf) lbf.onclick = () => { beep(700); open('list'); };
+  /* capture phase so Esc closes only this panel (the lobby behind it also listens for Esc) */
+  addEventListener('keydown', e => { if (e.key === 'Escape' && window.__friendsOpen()) { e.stopImmediatePropagation(); e.preventDefault(); close(); } }, true);
+  window.__sskPartyChanged = () => { render(); track(); };
+
+  /* follow login / logout without touching the account code */
+  let cur = '';
+  setInterval(() => {
+    const n = (typeof acctName !== 'undefined' && acctName) ? nameOf(acctName) : '';
+    if (n === cur) return; cur = n;
+    if (n) start(n); else stop();
+  }, 1000);
+})();
 </script>
 </body>
 </html>
